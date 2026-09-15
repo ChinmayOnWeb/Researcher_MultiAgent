@@ -1,43 +1,80 @@
 # MathResearcher
 
-MathResearcher is a local Python CLI for durable, coordinator-owned research runs.  The currently implemented execution slice is intentionally small: it initializes a run, runs exactly one deterministic local **fake** Frame worker, and replays the resulting durable state.
+MathResearcher is a local Python CLI for durable, coordinator-owned research
+runs. Its quick workflow is fixed and foregrounded: `frame -> investigate ->
+verify -> explain`. The coordinator, rather than the model, selects each
+stage, validates each result, and writes the final report.
 
-It does not yet launch Codex, Claude, or any other external agent CLI.
+## Request to report
 
-## Try the implemented lifecycle
-
-Create a request JSON that follows the version-one `run_request` contract, then run:
+Create the parent directory first: `init` intentionally refuses to create a
+missing parent directory.
 
 ```powershell
 $env:PYTHONPATH = 'src'
-py -m mathresearch init --request request.json --run-dir runs/demo --json
+New-Item -ItemType Directory -Force runs | Out-Null
+py -m mathresearch init --request examples/quick-proof.json --run-dir runs/proof --json
+py -m mathresearch run --run-dir runs/proof --adapter codex --timeout-seconds 180 --json
+py -m mathresearch status --run-dir runs/proof --json
+Get-Content runs/proof/report.md
+```
+
+A completed quick run returns a JSON object with `run_status: "complete"`,
+`accepted_submission_count: 4`, and the absolute `report_path`. Repeating the
+same `run` after completion is a durable no-op: it makes zero provider calls.
+
+The bundled example is ordinary-stakes Quick mode, disables every external
+capability, sets `learning_mode` to `false`, and allows exactly four accepted
+submissions.
+
+## Current provider status
+
+`run` currently accepts only `--adapter codex`; `--model NAME` is optional and
+`--timeout-seconds` defaults to 180. A request outside Quick/ordinary/
+non-learning/no-external-capabilities is rejected before a provider launch.
+An adapter or model that conflicts with the persisted configuration is likewise
+rejected before relaunch.
+
+The locally verified Codex CLI (`0.154.0`) is deliberately reported as
+`adapter_unavailable` for this MVP. Its read-only sandbox still permits shell
+execution, whereas this profile requires native no-shell enforcement. This is
+an honest provider blocker, not a successful research run. `doctor --json`
+reports availability without invoking a provider.
+
+The request-to-report commands above are the public lifecycle for a compliant
+future provider. The repository's integration tests exercise that lifecycle
+with a local argv stub; they do not claim a live Codex result.
+
+## Existing fake lifecycle
+
+The original compatibility command remains available:
+
+```powershell
 py -m mathresearch dispatch --run-dir runs/demo --adapter fake --timeout-seconds 30 --json
-py -m mathresearch status --run-dir runs/demo --json
 ```
 
-`dispatch --adapter fake` materializes and executes the sole `frame` task.  A successful result is accepted and leaves the run `active`; it does not declare the research run complete.  Repeating the same dispatch is idempotent and reports `already_accepted`.  An intent recorded before a crash remains visible as `blocked_interrupted` and is never silently relaunched.
+It executes only the legacy deterministic Frame worker. It is not a quick
+research report and does not substitute for `run`.
 
-Only `fake` is accepted by `dispatch` in this milestone.  Supplying `codex`, `claude`, or another adapter returns a structured `unsupported_adapter` error.  The existing `doctor` command can report whether those installed CLIs are discoverable, but it does not execute them.
+## Durable artifacts and recovery
 
-## Durable artifacts
+Quick workflow histories record the provider configuration, intent packet,
+captured diagnostics, normalized outcome, acceptance, and final report. A
+successful outcome recorded before acceptance resumes from the durable result
+without relaunching that stage. An intent without an outcome is visibly
+`workflow_blocked` and is never relaunched automatically. `status` replays
+committed events and repairs derived `state.json`, accepted payloads, and a
+completed `report.md` when their durable source event exists.
 
-The coordinator treats event history as authoritative and derives projections from it:
+## Limitations
 
-```text
-runs/demo/
-  request.json
-  state.json
-  events/000001.json ...
-  tasks/task-frame/
-    task.json
-    accepted.json                 # after a successful acceptance
-    attempts/attempt-frame-001/
-      packet.json
-      stdout.bin
-      stderr.log
-```
-
-The run is protected by an OS lock while a coordinator operation runs.  `status` replays events and repairs only derived artifacts; it rejects corrupt or unsafe run layouts instead of guessing.
+- No compliant installed provider is currently enabled for this no-shell MVP
+  profile; the live demonstration is blocked accordingly.
+- There are no retries, human-response commands, external evidence retrieval,
+  code execution, parallel scheduling, or Deep/Research workflow execution.
+- A schema-valid provider response is not evidence that the mathematical
+  answer is accurate. Quick reports disclose that verification is model
+  reasoning, with no external retrieval or executed experiments.
 
 ## Test
 
@@ -50,9 +87,3 @@ $env:TMP = $env:TEMP
 $env:PYTHONPATH = 'src'
 py -m unittest discover -s tests -v
 ```
-
-Remove `.verification-tmp` after the test process exits if desired.
-
-## Not yet implemented
-
-There are no real provider adapters, parallel worker scheduling, retry policy, human gates, evidence gathering, report generation, or a completed research workflow in this milestone.  The fake Frame worker is a deterministic local protocol used to verify the durable coordinator boundary before those capabilities are added.

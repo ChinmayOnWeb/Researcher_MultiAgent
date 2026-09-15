@@ -1,6 +1,6 @@
 # Portable AI research pipeline — design and durability boundary
 
-Status: architecture proposed for review, with a narrow verified implementation slice. Public `mathresearch init`, `mathresearch dispatch --adapter fake`, and `mathresearch status` commands implement durable initialization, one deterministic local Frame dispatch, and replay/repair. The slice does not launch Codex, Claude, or another external agent CLI; it does not schedule a broader research workflow or produce a completed research result.
+Status: architecture proposed for review, with a bounded implemented quick-workflow slice. Public `mathresearch init`, `mathresearch run --adapter codex`, `mathresearch dispatch --adapter fake`, and `mathresearch status` commands provide durable initialization, replay/repair, and coordinator-owned four-stage quick orchestration. The currently installed Codex CLI is deliberately unavailable for this no-shell profile, so a live provider result is not claimed.
 
 ## Objective
 
@@ -14,7 +14,7 @@ Build a model-independent protocol, role prompts, and a small local Python coord
 
 The coordinator runs on Windows, macOS, and Linux using the Python standard library. A single coordinator owns each run. When execution adapters are added, workers will return submissions for it to ingest; parallel research remains optional. An adapter unable to provide isolated worker contexts must execute branches sequentially or disclose the weaker isolation.
 
-This slice establishes the initialization/status durability boundary and a single deterministic fake adapter execution. Its implemented work covers versioned run contracts, per-run locking, atomic initialization, event replay/repair, Frame task/attempt materialization, captured worker output, and acceptance of one valid local Frame submission. Dispatch commits intent before launching the worker; an interrupted intent is blocked rather than silently relaunched. All real provider adapters and later workflow capabilities described below remain design targets until they are publicly implemented and verified.
+The implemented slice covers versioned run contracts, per-run locking, atomic initialization, event replay/repair, legacy fake Frame dispatch, and a fixed Quick graph: Frame, Investigate, Verify, and Explain. The coordinator persists configuration, intent packets, bounded provider captures, normalized results, acceptance, and a deterministic report; it alone decides the next stage and terminal status. A committed successful outcome resumes without a replacement launch; an intent without an outcome becomes visibly blocked rather than silently relaunched. The public Codex adapter remains unavailable because its verified CLI controls cannot enforce disabled shell execution, so no live-provider completion is claimed.
 
 Three delivery options were considered:
 
@@ -49,7 +49,7 @@ Each run has an isolated directory with:
 
 Events are authoritative; `state.json` is only a rebuildable projection. Submission processing is atomic from the reader's perspective: an event becomes committed only after its temporary file is renamed into place, and an interrupted or stale projection is rebuilt from committed events. A nonblocking, OS-backed per-run lock rejects simultaneous writers; the persistent lock-file path is not itself a claim of ownership. Duplicate submission IDs are idempotent; conflicting duplicates are rejected. Stale submissions against a superseded task revision are rejected with an actionable explanation.
 
-The current recovery procedure is limited to status authoritatively replaying the committed initialization event and atomically reconstructing missing or stale initialization state; it refuses inconsistent or corrupt layouts. Before commit, initialization may accept an existing destination only when its sole persistent entry is `.run.lock`; it refuses any other nonempty or precommit destination rather than overwriting it. These rules reduce partial-write and concurrency risks; they do not promise recovery from every power loss, filesystem failure, rename-semantics failure, or external interference.
+`status` authoritatively replays committed initialization and Quick workflow events and atomically reconstructs missing or stale projections, including accepted stage payloads and a completed report. It refuses inconsistent or corrupt layouts. Before commit, initialization may accept an existing destination only when its sole persistent entry is `.run.lock`; it refuses any other nonempty or precommit destination rather than overwriting it. These rules reduce partial-write and concurrency risks; they do not promise recovery from every power loss, filesystem failure, rename-semantics failure, or external interference.
 
 The model receives task-specific packets rather than the entire growing transcript. Every packet contains the objective, allowed inputs, output schema, completion criteria, capability limits, and remaining task budget. Artifacts outside the run directory are not written by the coordinator.
 
@@ -117,7 +117,7 @@ Stop states are `awaiting_human`, `blocked`, `budget_exhausted`, and `complete`.
 
 ## Proposed interface
 
-The public CLI currently exposes `init`, `dispatch --adapter fake`, and `status`. `dispatch` accepts only the deterministic local fake adapter in this slice, creates and executes the one Frame task, and returns a durable disposition (`accepted`, `already_accepted`, `rejected`, `already_rejected`, or `blocked_interrupted`). `status` authoritatively replays committed events and atomically rebuilds missing or stale projections. The intended later surface adds real installed-CLI adapters, next-task retrieval, structured-result submission, human-response recording, validation, and log/report rendering. JSON output enables integration; readable output supports direct use.
+The public CLI exposes `init`, `run --adapter codex [--model NAME] [--timeout-seconds N]`, `dispatch --adapter fake`, and `status`. `run` starts or resumes the fixed Quick graph and emits a final machine result only after a terminal state. A completed repeat makes zero provider calls. It rejects unsupported request profiles and conflicting resume configuration before launch. The only configured provider is deliberately unavailable for the required no-shell capability profile; this returns `adapter_unavailable`, rather than pretending a read-only shell is no shell. `dispatch` accepts only the deterministic local fake adapter, creates and executes the one legacy Frame task, and returns a durable disposition (`accepted`, `already_accepted`, `rejected`, `already_rejected`, or `blocked_interrupted`). JSON output enables integration; readable output supports direct use.
 
 The planned package includes role prompts, adapter configuration, sample requests, and one entirely local worked example. An installed-CLI adapter launches the configured agent command with coordinator-issued packets; worker submissions are claims to be checked and never directly mark the overall run complete.
 
@@ -125,7 +125,7 @@ The coordinator and adapter never execute code supplied in a research result. Ex
 
 ## Verification and acceptance
 
-The full execution implementation will be ready when a local worked example can proceed from request to report, pause for a human response, and resume after a process restart. It must preserve rejected hypotheses and expose unresolved findings. That is a future acceptance target, not a statement about the current init/status-only slice.
+The integrated CLI tests demonstrate request-to-report behavior through a safe local argv stub: four fresh stage processes, a readable report, restart recovery, and a no-op repeated run. This is not a live-provider demonstration and is not evidence of research accuracy. A live release gate remains blocked until an installed authenticated provider can enforce the no-shell profile, complete the bounded demonstration, and undergo independent end-to-end review.
 
 Targeted automated checks cover:
 

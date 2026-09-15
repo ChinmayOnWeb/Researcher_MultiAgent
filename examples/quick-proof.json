@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "record_type": "run_request",
+  "run_id": "quick-odd-sums-proof",
+  "question": "Prove that the sum of the first n odd positive integers is n squared, using an algebraic argument and a geometric interpretation.",
+  "actual_goal": "Give an elementary proof that separates the algebraic and geometric arguments.",
+  "context": "The question and standard arithmetic are the only supplied materials.",
+  "constraints": [
+    "Do not browse, modify files, run shell tools, or execute experiments."
+  ],
+  "audience_level": "undergraduate",
+  "mode": "quick",
+  "stakes": "ordinary",
+  "learning_mode": false,
+  "capabilities": {
+    "browse": false,
+    "execute_code": false,
+    "file_mutation": false
+  },
+  "budgets": {
+    "max_accepted_submissions": 4,
+    "max_revision_cycles": 0,
+    "elapsed_time_seconds": null
+  }
+}
