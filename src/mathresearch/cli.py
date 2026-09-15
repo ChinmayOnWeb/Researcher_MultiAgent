@@ -11,14 +11,14 @@ from . import __version__
 from .adapters.codex import CodexAdapter
 from .adapters.discovery import discover_built_in_adapters
 from .adapters.base import Adapter
-from .contracts.quick import QuickState
+from .contracts.quick import QuickState, WorkflowEvent
 from .contracts.run import RunState
 from .contracts.validation import ValidationError
 from .dispatch import DispatchResult, dispatch_fake_frame
 from .errors import ExitCode, InvalidInvocationError, RunStoreError
 from .process_runner import ProcessRunnerError
 from .quick_workflow import run_quick
-from .run_store import initialize_run, load_run_status
+from .run_store import initialize_run, load_run_status, open_locked_run
 
 
 INVALID_INVOCATION_MESSAGE = (
@@ -28,6 +28,32 @@ INVALID_INVOCATION_MESSAGE = (
 
 class AdapterUnavailableError(RuntimeError):
     """A requested provider cannot satisfy the quick MVP's capability boundary."""
+
+
+def _completed_quick_state(
+    run_dir: Path, adapter_id: str, model: str | None
+) -> QuickState | None:
+    """Return a durable completion without requiring its provider to remain installed."""
+    if adapter_id != "codex":
+        return None
+    with open_locked_run(run_dir) as locked:
+        if not isinstance(locked.state, QuickState) or locked.state.status != "complete":
+            return None
+        config = next(
+            (
+                event.body
+                for event in locked.events
+                if isinstance(event, WorkflowEvent)
+                and event.event_type == "quick_configured"
+            ),
+            None,
+        )
+        if config is None or config["adapter"] != adapter_id or config["model"] != model:
+            raise ValidationError(
+                "configuration",
+                "unsupported_workflow: adapter or model conflicts with persisted configuration",
+            )
+        return locked.state
 
 
 def resolve_quick_provider(
@@ -187,17 +213,21 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.run_dir, timeout_seconds=arguments.timeout_seconds
             )
         else:
-            adapter, adapter_id, executable, model = resolve_quick_provider(
-                arguments.adapter, arguments.model
+            quick_state = _completed_quick_state(
+                arguments.run_dir, arguments.adapter, arguments.model
             )
-            quick_state = run_quick(
-                arguments.run_dir,
-                adapter,
-                adapter_id=adapter_id,
-                executable=executable,
-                model=model,
-                timeout_seconds=arguments.timeout_seconds,
-            )
+            if quick_state is None:
+                adapter, adapter_id, executable, model = resolve_quick_provider(
+                    arguments.adapter, arguments.model
+                )
+                quick_state = run_quick(
+                    arguments.run_dir,
+                    adapter,
+                    adapter_id=adapter_id,
+                    executable=executable,
+                    model=model,
+                    timeout_seconds=arguments.timeout_seconds,
+                )
     except KeyboardInterrupt:
         return _report_error(
             code="cancelled",

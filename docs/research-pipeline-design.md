@@ -1,6 +1,6 @@
 # Portable AI research pipeline — design and durability boundary
 
-Status: architecture proposed for review, with a bounded implemented quick-workflow slice. Public `mathresearch init`, `mathresearch run --adapter codex`, `mathresearch dispatch --adapter fake`, and `mathresearch status` commands provide durable initialization, replay/repair, and coordinator-owned four-stage quick orchestration. The currently installed Codex CLI is deliberately unavailable for this no-shell profile, so a live provider result is not claimed.
+Status: architecture proposed for review, with a bounded implemented quick-workflow slice. Public `mathresearch init`, `mathresearch run --adapter codex`, `mathresearch dispatch --adapter fake`, and `mathresearch status` commands provide durable initialization, replay/repair, and coordinator-owned four-stage quick orchestration. The Codex adapter checks its native disabled-tool profile before launching a worker; a new live-provider result is not claimed in this round.
 
 ## Objective
 
@@ -14,7 +14,7 @@ Build a model-independent protocol, role prompts, and a small local Python coord
 
 The coordinator runs on Windows, macOS, and Linux using the Python standard library. A single coordinator owns each run. When execution adapters are added, workers will return submissions for it to ingest; parallel research remains optional. An adapter unable to provide isolated worker contexts must execute branches sequentially or disclose the weaker isolation.
 
-The implemented slice covers versioned run contracts, per-run locking, atomic initialization, event replay/repair, legacy fake Frame dispatch, and a fixed Quick graph: Frame, Investigate, Verify, and Explain. The coordinator persists configuration, intent packets, bounded provider captures, normalized results, acceptance, and a deterministic report; it alone decides the next stage and terminal status. A committed successful outcome resumes without a replacement launch; an intent without an outcome becomes visibly blocked rather than silently relaunched. The public Codex adapter remains unavailable because its verified CLI controls cannot enforce disabled shell execution, so no live-provider completion is claimed.
+The implemented slice covers versioned run contracts, per-run locking, atomic initialization, event replay/repair, legacy fake Frame dispatch, and a fixed Quick graph: Frame, Investigate, Verify, and Explain. The coordinator persists configuration, intent packets, bounded provider captures, normalized results, acceptance, and a deterministic report; it alone decides the next stage and terminal status. A committed successful outcome resumes without a replacement launch; an intent without an outcome becomes visibly blocked rather than silently relaunched. The Codex adapter uses native `--disable` controls for shell, browser, computer, and apps features; `--ignore-user-config`, `--ignore-rules`, read-only sandboxing, and no search flag keep the worker profile bounded.
 
 Three delivery options were considered:
 
@@ -117,7 +117,7 @@ Stop states are `awaiting_human`, `blocked`, `budget_exhausted`, and `complete`.
 
 ## Proposed interface
 
-The public CLI exposes `init`, `run --adapter codex [--model NAME] [--timeout-seconds N]`, `dispatch --adapter fake`, and `status`. `run` starts or resumes the fixed Quick graph and emits a final machine result only after a terminal state. A completed repeat makes zero provider calls. It rejects unsupported request profiles and conflicting resume configuration before launch. The only configured provider is deliberately unavailable for the required no-shell capability profile; this returns `adapter_unavailable`, rather than pretending a read-only shell is no shell. `dispatch` accepts only the deterministic local fake adapter, creates and executes the one legacy Frame task, and returns a durable disposition (`accepted`, `already_accepted`, `rejected`, `already_rejected`, or `blocked_interrupted`). JSON output enables integration; readable output supports direct use.
+The public CLI exposes `init`, `run --adapter codex [--model NAME] [--timeout-seconds N]`, `dispatch --adapter fake`, and `status`. `run` starts or resumes the fixed Quick graph and emits a final machine result only after a terminal state. A completed repeat returns the persisted state before resolving a provider, so an already-durable report remains readable if the executable is later removed. It rejects unsupported request profiles and conflicting resume configuration before launch. New work proceeds only after the Codex adapter validates that the installed CLI exposes and accepts the native disabled-tool control set; a failed capability preflight returns `adapter_unavailable`. `dispatch` accepts only the deterministic local fake adapter, creates and executes the one legacy Frame task, and returns a durable disposition (`accepted`, `already_accepted`, `rejected`, `already_rejected`, or `blocked_interrupted`). JSON output enables integration; readable output supports direct use.
 
 The planned package includes role prompts, adapter configuration, sample requests, and one entirely local worked example. An installed-CLI adapter launches the configured agent command with coordinator-issued packets; worker submissions are claims to be checked and never directly mark the overall run complete.
 
@@ -125,7 +125,7 @@ The coordinator and adapter never execute code supplied in a research result. Ex
 
 ## Verification and acceptance
 
-The integrated CLI tests demonstrate request-to-report behavior through a safe local argv stub: four fresh stage processes, a readable report, restart recovery, and a no-op repeated run. This is not a live-provider demonstration and is not evidence of research accuracy. A live release gate remains blocked until an installed authenticated provider can enforce the no-shell profile, complete the bounded demonstration, and undergo independent end-to-end review.
+The integrated CLI tests demonstrate request-to-report behavior through a safe local argv stub: four fresh stage processes, a readable report, restart recovery, and a no-op repeated run after provider unavailability. This is not a live-provider demonstration and is not evidence of research accuracy. The release gate remains unclaimed until an installed authenticated provider completes the bounded demonstration and undergoes independent end-to-end review.
 
 Targeted automated checks cover:
 

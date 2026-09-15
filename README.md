@@ -35,14 +35,16 @@ non-learning/no-external-capabilities is rejected before a provider launch.
 An adapter or model that conflicts with the persisted configuration is likewise
 rejected before relaunch.
 
-The locally verified Codex CLI (`0.154.0`) is deliberately reported as
-`adapter_unavailable` for this MVP. Its read-only sandbox still permits shell
-execution, whereas this profile requires native no-shell enforcement. This is
-an honest provider blocker, not a successful research run. `doctor --json`
-reports availability without invoking a provider.
+The locally verified Codex CLI (`0.154.0`) uses native per-invocation controls:
+strict configuration, disabled `shell_tool`, `browser_use`, `computer_use`,
+and `apps` features, a read-only sandbox, ignored user configuration and rule
+files, and no `--search` flag. Before a worker intent is recorded, the adapter
+checks the installed feature inventory and verifies that this exact control set
+is accepted by the CLI parser. If that check or executable resolution fails,
+`run` returns `adapter_unavailable` without launching a worker. `doctor --json`
+reports discovery without invoking a provider.
 
-The request-to-report commands above are the public lifecycle for a compliant
-future provider. The repository's integration tests exercise that lifecycle
+The repository's integration tests exercise the request-to-report lifecycle
 with a local argv stub; they do not claim a live Codex result.
 
 ## Existing fake lifecycle
@@ -68,8 +70,8 @@ completed `report.md` when their durable source event exists.
 
 ## Limitations
 
-- No compliant installed provider is currently enabled for this no-shell MVP
-  profile; the live demonstration is blocked accordingly.
+- This round did not run a new four-stage live-provider demonstration. A
+  schema-valid response is not a proof of research accuracy or tool safety.
 - There are no retries, human-response commands, external evidence retrieval,
   code execution, parallel scheduling, or Deep/Research workflow execution.
 - A schema-valid provider response is not evidence that the mathematical

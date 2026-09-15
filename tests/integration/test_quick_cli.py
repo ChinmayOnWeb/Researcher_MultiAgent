@@ -114,15 +114,18 @@ class QuickCliIntegrationTests(unittest.TestCase):
         payload = quick_request(**overrides)
         self.request.write_text(json.dumps(payload), encoding="utf-8")
 
-    def _environment(self, *, mode: str = "valid") -> dict[str, str]:
-        return os.environ | {
+    def _environment(self, *, mode: str = "valid", unavailable_provider: bool = False) -> dict[str, str]:
+        environment = os.environ | {
             "PYTHONPATH": os.pathsep.join((str(SOURCE_ROOT), str(PROJECT_ROOT))),
             "MATHRESEARCH_STUB_EXECUTABLE": str(self.stub),
             "MATHRESEARCH_STUB_COUNT": str(self.count),
             "MATHRESEARCH_STUB_MODE": mode,
         }
+        if unavailable_provider:
+            environment["PATH"] = ""
+        return environment
 
-    def _run(self, *arguments: str, stub: bool = False, mode: str = "valid") -> subprocess.CompletedProcess[str]:
+    def _run(self, *arguments: str, stub: bool = False, mode: str = "valid", unavailable_provider: bool = False) -> subprocess.CompletedProcess[str]:
         command = [sys.executable, "-m", "mathresearch", *arguments]
         if stub:
             command = [
@@ -131,7 +134,7 @@ class QuickCliIntegrationTests(unittest.TestCase):
                 "import sys; import mathresearch.cli as c; from tests.integration.test_quick_cli import resolve_stub_provider; c.resolve_quick_provider = resolve_stub_provider; raise SystemExit(c.main(sys.argv[1:]))",
                 *arguments,
             ]
-        return subprocess.run(command, cwd=PROJECT_ROOT, env=self._environment(mode=mode), capture_output=True, text=True, check=False)
+        return subprocess.run(command, cwd=PROJECT_ROOT, env=self._environment(mode=mode, unavailable_provider=unavailable_provider), capture_output=True, text=True, check=False)
 
     def _launch_count(self) -> list[str]:
         if not self.count.exists():
@@ -158,14 +161,15 @@ class QuickCliIntegrationTests(unittest.TestCase):
         self.assertIn("sum of the first n odd positive integers", report)
         self.assertIn("No external retrieval", report)
 
-        repeated = self._run("run", "--run-dir", str(self.run), "--adapter", "codex", "--json", stub=True)
+        repeated = self._run("run", "--run-dir", str(self.run), "--adapter", "codex", "--json")
         self.assertEqual(repeated.returncode, 0, repeated.stderr)
+        self.assertEqual(json.loads(repeated.stdout)["run_status"], "complete")
         self.assertEqual(self._launch_count(), ["frame", "investigate", "verify", "explain"])
 
     def test_unavailable_provider_is_reported_without_launching_a_worker(self) -> None:
-        """Advertising a capability-unsafe Codex installation must fail before any intent."""
+        """An absent provider executable must fail before any intent is recorded."""
         self._initialize()
-        result = self._run("run", "--run-dir", str(self.run), "--adapter", "codex", "--json")
+        result = self._run("run", "--run-dir", str(self.run), "--adapter", "codex", "--json", unavailable_provider=True)
         self.assertEqual(result.returncode, 11)
         self.assertEqual(json.loads(result.stderr)["code"], "adapter_unavailable")
         self.assertEqual(self._launch_count(), [])

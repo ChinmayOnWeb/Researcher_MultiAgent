@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
+import subprocess
 from typing import Any, Mapping
 
 from .base import LaunchSpec, WorkerInput
@@ -13,11 +15,9 @@ from .base import LaunchSpec, WorkerInput
 class CodexAdapter:
     """Use a fresh, ephemeral Codex process with a dedicated structured result file.
 
-    This adapter retains the locally verified argv protocol, but is deliberately
-    unavailable to the quick-research MVP.  Codex 0.154.0 can restrict writes,
-    web search, configured MCP, and rules, but it cannot natively disable shell
-    execution.  A reasoning-only profile must not claim that a read-only shell
-    is no shell at all.
+    The quick profile disables every locally verified native tool route that
+    could execute commands or reach external systems, and ignores ambient
+    config and policy files for every worker process.
     """
 
     protocol_version = "codex-exec-0.154.0"
@@ -25,19 +25,88 @@ class CodexAdapter:
         "web_search": False,
         "file_mutation": False,
         "external_mcp_config": False,
-        "shell_execution": True,
+        "shell_execution": False,
     }
+    _DISABLED_FEATURES = ("shell_tool", "browser_use", "computer_use", "apps")
 
     def __init__(self, executable: Path, model: str | None = None) -> None:
         self.executable = Path(executable)
         self.model = model
+        self._preflight_done = False
 
     def preflight(self) -> None:
-        """Reject the unsupported reasoning-only MVP capability profile."""
-        raise ValueError(
-            "Codex 0.154.0 cannot enforce disabled shell execution; "
-            "the reasoning-only MVP provider profile is unavailable"
+        """Confirm that the installed CLI exposes every native disable control.
+
+        This check never submits a prompt.  It checks the feature inventory and
+        asks the parser to accept the complete noninteractive control set before
+        a coordinator records any worker intent.
+        """
+        if self._preflight_done:
+            return
+        inventory = self._run_preflight(
+            (str(self.executable), *self._disable_arguments(), "features", "list")
         )
+        states = {
+            feature: re.search(
+                rf"^{re.escape(feature)}\s+\S+\s+(true|false)\s*$",
+                inventory.stdout,
+                flags=re.MULTILINE,
+            )
+            for feature in self._DISABLED_FEATURES
+        }
+        missing = [feature for feature, state in states.items() if state is None]
+        if missing:
+            raise ValueError(
+                "Codex cannot enforce the quick MVP disabled-tool profile; "
+                f"feature inventory is missing: {', '.join(missing)}"
+            )
+        enabled = [
+            feature
+            for feature, state in states.items()
+            if state is not None and state.group(1) != "false"
+        ]
+        if enabled:
+            raise ValueError(
+                "Codex cannot enforce the quick MVP disabled-tool profile; "
+                f"features must be disabled: {', '.join(enabled)}"
+            )
+        self._run_preflight(
+            tuple([str(self.executable), *self._control_arguments(), "exec", "--ignore-user-config", "--ignore-rules", "--help"])
+        )
+        self._preflight_done = True
+
+    def _run_preflight(self, argv: tuple[str, ...]) -> subprocess.CompletedProcess[str]:
+        try:
+            result = subprocess.run(
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ValueError(f"Codex capability preflight failed: {exc}") from exc
+        if result.returncode != 0:
+            raise ValueError(
+                "Codex cannot enforce the quick MVP disabled-tool profile: "
+                f"preflight command exited {result.returncode}: {result.stderr.strip()}"
+            )
+        return result
+
+    @classmethod
+    def _disable_arguments(cls) -> tuple[str, ...]:
+        arguments: list[str] = []
+        for feature in cls._DISABLED_FEATURES:
+            arguments.extend(("--disable", feature))
+        return tuple(arguments)
+
+    @classmethod
+    def _control_arguments(cls) -> tuple[str, ...]:
+        arguments = ["--strict-config", *cls._disable_arguments()]
+        arguments.extend(("--ask-for-approval", "never", "--sandbox", "read-only"))
+        return tuple(arguments)
 
     def prepare(self, task: WorkerInput, scratch: Path) -> LaunchSpec:
         root = Path(os.path.abspath(scratch))
@@ -46,8 +115,7 @@ class CodexAdapter:
         with schema_path.open("x", encoding="utf-8") as schema_file:
             schema_file.write(json.dumps(task.output_schema, sort_keys=True, separators=(",", ":"), allow_nan=False))
         argv: list[str] = [
-            str(self.executable), "--ask-for-approval", "never", "--sandbox", "read-only",
-            "exec", "--skip-git-repo-check", "--ephemeral",
+            str(self.executable), *self._control_arguments(), "exec", "--skip-git-repo-check", "--ephemeral",
             "--ignore-user-config", "--ignore-rules",
         ]
         if self.model is not None:

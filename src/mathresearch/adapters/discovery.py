@@ -27,10 +27,5 @@ class AdapterAvailability:
 def discover_built_in_adapters() -> tuple[AdapterAvailability, ...]:
     """Resolve built-in adapter executables without invoking them."""
     claude = AdapterAvailability("claude", shutil.which("claude"))
-    codex = AdapterAvailability(
-        "codex",
-        shutil.which("codex"),
-        capability_safe=False,
-        reason="Codex 0.154.0 cannot enforce disabled shell execution for the reasoning-only MVP profile",
-    )
+    codex = AdapterAvailability("codex", shutil.which("codex"))
     return (claude, codex)

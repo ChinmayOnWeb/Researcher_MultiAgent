@@ -69,7 +69,43 @@ provider has native no-shell enforcement.
 ## Review status and limitations
 
 The task request forbade delegation, so no independent end-to-end review was
-obtained in this task. The existing Task 1 review findings remain relevant:
-process-tree cleanup and provider tool restrictions are implemented in their
-own boundary but a compliant live provider is still unavailable. The release
-gate is intentionally not claimed as passed.
+obtained in the initial implementation. The existing Task 1 review findings
+remain relevant: process-tree cleanup and provider tool restrictions are
+implemented in their own boundary. The release gate is intentionally not
+claimed as passed.
+
+## Round 1/5 provider-boundary remediation
+
+An integrated review found two Task 4 boundary defects: the prior Codex profile
+did not use the locally available native `shell_tool` disable switch, and the
+public resolver ran before it could return an already durable completed state.
+
+The adapter now uses only controls advertised by the installed `codex-cli
+0.154.0`: `--strict-config`, `--disable shell_tool`, `--disable browser_use`,
+`--disable computer_use`, `--disable apps`, `--ask-for-approval never`, and
+`--sandbox read-only`, followed by `exec --ignore-user-config --ignore-rules`.
+It omits `--search`. Its no-prompt preflight reads `codex features list` with
+the native disable switches and requires all four features to report effective
+state `false`, then invokes the complete disabled-tool command with `exec ...
+--help` to confirm parser acceptance before an intent is recorded. Any failure
+is an `adapter_unavailable` outcome.
+
+The CLI now reads a completed Quick state and validates its persisted adapter
+and model selection before provider resolution. This preserves report access
+and no-op semantics after a provider disappears, while a model conflict remains
+an `unsupported_workflow` error.
+
+Fresh evidence:
+
+- `py -m unittest tests.unit.test_codex_adapter tests.integration.test_quick_cli -v`
+  passed 11 tests, including the installed feature-inventory preflight, an
+  enabled-feature rejection regression, and a
+  fresh-process unavailable-provider rerun of a completed stub run.
+- `py -m unittest discover -s tests -v` exited 0 after the remediation.
+- The review findings above are resolved in their Task 4 owning files; the
+  existing process-tree cleanup and crash-recovery tests remain in the full
+  suite.
+
+No new live four-stage model run was made in this remediation. The quick
+research MVP release label remains unclaimed pending that demonstration and an
+independent end-to-end re-review.
