@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from mathresearch.adapters.base import WorkerOutput
-from mathresearch.quick_workflow import run_quick
+from mathresearch.quick_workflow import _schema, run_quick
 from mathresearch.run_store import initialize_run, load_run_status, open_locked_run
 
 
@@ -35,6 +35,38 @@ class QuickWorkflowTests(unittest.TestCase):
             "explain": {"summary": "supported", "explanation": "details", "conclusion": "supported", "limitations": []},
         }
     def tearDown(self): self.temp.cleanup()
+
+    def test_provider_schemas_define_items_and_strict_nested_objects(self):
+        """An array without items is rejected by Codex before a worker can return a result."""
+        expected = {
+            "frame": {"framed_question", "success_criteria", "terms", "assumptions", "missing_inputs", "stakes_assessment"},
+            "investigate": {"answer", "claims", "alternatives", "limitations"},
+            "verify": {"checks", "disposition", "limitations"},
+            "explain": {"summary", "explanation", "conclusion", "limitations"},
+        }
+        for stage, fields in expected.items():
+            schema = _schema(stage)
+            self.assertEqual(schema["type"], "object")
+            self.assertFalse(schema["additionalProperties"])
+            self.assertEqual(set(schema["required"]), fields)
+            self.assertEqual(set(schema["properties"]), fields)
+            for field in fields:
+                property_schema = schema["properties"][field]
+                if property_schema.get("type") == "array":
+                    self.assertIn("items", property_schema, f"{stage}.{field}")
+
+        claim = _schema("investigate")["properties"]["claims"]["items"]
+        self.assertEqual(claim["type"], "object")
+        self.assertFalse(claim["additionalProperties"])
+        self.assertEqual(set(claim["required"]), {"id", "statement", "basis", "support"})
+        self.assertEqual(claim["properties"]["basis"]["enum"], ["supplied", "derived", "inferred", "unknown"])
+
+        check = _schema("verify")["properties"]["checks"]["items"]
+        self.assertEqual(check["type"], "object")
+        self.assertFalse(check["additionalProperties"])
+        self.assertEqual(set(check["required"]), {"claim_id", "verdict", "reasoning"})
+        self.assertEqual(check["properties"]["verdict"]["enum"], ["supported", "unsupported", "contradicted"])
+
     def test_runs_fixed_graph_once_then_noops(self):
         calls=[]
         def worker(adapter, task, **kwargs):

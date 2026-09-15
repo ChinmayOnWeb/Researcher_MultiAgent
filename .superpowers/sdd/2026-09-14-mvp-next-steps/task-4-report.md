@@ -117,3 +117,29 @@ on its repeated public CLI invocation, removing `codex` from that fresh
 process's `PATH`. It therefore proves the intended ordering: a persisted
 completed Quick state is returned without provider discovery or launch after
 the provider disappears.
+
+## Round 3/5 provider-schema remediation
+
+A live Codex protocol attempt reported `invalid_json_schema`: provider-facing
+array properties such as `assumptions` lacked required `items` schemas. The
+coordinator now emits strict JSON Schema for all four stages: every string list
+has `items: {"type": "string"}`, and the Investigate Claim and Verify Check
+arrays define strict nested object schemas with all fields required, typed, and
+enum-bounded where applicable. The Explain and Verify enum fields are also
+explicit strings.
+
+New regression coverage verifies all top-level objects are strict, every array
+has `items`, Claim/Check nested objects are strict and complete, and
+`CodexAdapter.prepare()` persists the generated schema unchanged to its output
+schema file. Existing blocked/interrupted workflow coverage remains in the
+focused run.
+
+Evidence:
+
+- `py -m unittest tests.unit.test_quick_workflow tests.unit.test_codex_adapter -v`
+  passed 19 tests.
+- `py -m unittest discover -s tests -v` exited 0.
+
+No new live four-stage provider call was made in this round. The release gate
+remains unclaimed pending the bounded live demonstration and independent
+end-to-end re-review.

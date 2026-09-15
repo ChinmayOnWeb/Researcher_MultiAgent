@@ -11,6 +11,7 @@ from unittest.mock import patch
 from mathresearch.adapters.base import WorkerInput
 from mathresearch.adapters.codex import CodexAdapter
 from mathresearch.adapters.discovery import discover_built_in_adapters
+from mathresearch.quick_workflow import _schema
 
 
 class CodexAdapterTests(unittest.TestCase):
@@ -23,7 +24,8 @@ class CodexAdapterTests(unittest.TestCase):
 
     def test_prepare_uses_verified_noninteractive_flags_and_stdin(self) -> None:
         adapter = CodexAdapter(Path("C:/tools/codex.exe"), model="gpt-test")
-        spec = adapter.prepare(WorkerInput("frame", "prompt", {"type": "object"}), self.scratch)
+        schema = _schema("investigate")
+        spec = adapter.prepare(WorkerInput("investigate", "prompt", schema), self.scratch)
         self.assertEqual(spec.argv[0], "C:\\tools\\codex.exe")
         self.assertEqual(spec.argv[1:], (
             "--strict-config", "--disable", "shell_tool", "--disable", "browser_use",
@@ -34,7 +36,9 @@ class CodexAdapterTests(unittest.TestCase):
             "--output-last-message", str(self.scratch / "result.json"), "-",
         ))
         self.assertEqual(spec.stdin, b"prompt")
-        self.assertEqual(json.loads((self.scratch / "output-schema.json").read_text()), {"type": "object"})
+        persisted_schema = json.loads((self.scratch / "output-schema.json").read_text())
+        self.assertEqual(persisted_schema, schema)
+        self.assertIn("items", persisted_schema["properties"]["claims"])
 
     @unittest.skipUnless(shutil.which("codex"), "requires the locally installed Codex CLI")
     def test_preflight_accepts_the_installed_disabled_tool_inventory(self) -> None:

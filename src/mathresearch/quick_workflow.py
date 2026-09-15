@@ -131,10 +131,55 @@ def _packet(request: RunRequest, stage: str, accepted: Mapping[str, Mapping[str,
 
 def _schema(stage: str) -> dict[str, Any]:
     # The durable contracts remain the authority; this is the provider-facing JSON schema.
-    properties: dict[str, Any] = {"frame": {"framed_question": {"type": "string"}, "success_criteria": {"type": "array"}, "terms": {"type": "array"}, "assumptions": {"type": "array"}, "missing_inputs": {"type": "array"}, "stakes_assessment": {"type": "string"}},
-        "investigate": {"answer": {"type": "string"}, "claims": {"type": "array"}, "alternatives": {"type": "array"}, "limitations": {"type": "array"}},
-        "verify": {"checks": {"type": "array"}, "disposition": {"enum": ["pass", "inconclusive", "fail"]}, "limitations": {"type": "array"}},
-        "explain": {"summary": {"type": "string"}, "explanation": {"type": "string"}, "conclusion": {"enum": ["supported", "inconclusive"]}, "limitations": {"type": "array"}}}[stage]
+    strings = {"type": "array", "items": {"type": "string"}}
+    claim = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["id", "statement", "basis", "support"],
+        "properties": {
+            "id": {"type": "string"},
+            "statement": {"type": "string"},
+            "basis": {"type": "string", "enum": ["supplied", "derived", "inferred", "unknown"]},
+            "support": {"type": "string"},
+        },
+    }
+    check = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["claim_id", "verdict", "reasoning"],
+        "properties": {
+            "claim_id": {"type": "string"},
+            "verdict": {"type": "string", "enum": ["supported", "unsupported", "contradicted"]},
+            "reasoning": {"type": "string"},
+        },
+    }
+    properties: dict[str, Any] = {
+        "frame": {
+            "framed_question": {"type": "string"},
+            "success_criteria": strings,
+            "terms": strings,
+            "assumptions": strings,
+            "missing_inputs": strings,
+            "stakes_assessment": {"type": "string"},
+        },
+        "investigate": {
+            "answer": {"type": "string"},
+            "claims": {"type": "array", "items": claim},
+            "alternatives": strings,
+            "limitations": strings,
+        },
+        "verify": {
+            "checks": {"type": "array", "items": check},
+            "disposition": {"type": "string", "enum": ["pass", "inconclusive", "fail"]},
+            "limitations": strings,
+        },
+        "explain": {
+            "summary": {"type": "string"},
+            "explanation": {"type": "string"},
+            "conclusion": {"type": "string", "enum": ["supported", "inconclusive"]},
+            "limitations": strings,
+        },
+    }[stage]
     return {"type": "object", "additionalProperties": False, "required": list(properties), "properties": properties}
 
 
