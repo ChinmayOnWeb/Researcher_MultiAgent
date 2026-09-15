@@ -109,3 +109,11 @@ Fresh evidence:
 No new live four-stage model run was made in this remediation. The quick
 research MVP release label remains unclaimed pending that demonstration and an
 independent end-to-end re-review.
+
+## Round 2/5 completed-run fixture correction
+
+The completed-run integration regression now passes `unavailable_provider=True`
+on its repeated public CLI invocation, removing `codex` from that fresh
+process's `PATH`. It therefore proves the intended ordering: a persisted
+completed Quick state is returned without provider discovery or launch after
+the provider disappears.

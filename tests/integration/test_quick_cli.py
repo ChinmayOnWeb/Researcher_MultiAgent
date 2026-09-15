@@ -161,7 +161,15 @@ class QuickCliIntegrationTests(unittest.TestCase):
         self.assertIn("sum of the first n odd positive integers", report)
         self.assertIn("No external retrieval", report)
 
-        repeated = self._run("run", "--run-dir", str(self.run), "--adapter", "codex", "--json")
+        repeated = self._run(
+            "run",
+            "--run-dir",
+            str(self.run),
+            "--adapter",
+            "codex",
+            "--json",
+            unavailable_provider=True,
+        )
         self.assertEqual(repeated.returncode, 0, repeated.stderr)
         self.assertEqual(json.loads(repeated.stdout)["run_status"], "complete")
         self.assertEqual(self._launch_count(), ["frame", "investigate", "verify", "explain"])
