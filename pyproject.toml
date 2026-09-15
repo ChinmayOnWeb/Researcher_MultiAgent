@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mathresearch"
+version = "0.1.0"
+description = "A local coordinator for multi-agent research workflows."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+mathresearch = "mathresearch.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

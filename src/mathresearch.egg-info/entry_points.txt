@@ -1,0 +1,2 @@
+[console_scripts]
+mathresearch = mathresearch.cli:main

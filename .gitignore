@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.verification-tmp/
+.task3-tmp/
+task4-temp/
+test-temp-store/
+tmp*/
+tmpcheck/
+build/
+outside-capture.bin

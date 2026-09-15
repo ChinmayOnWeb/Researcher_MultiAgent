@@ -1,0 +1,12 @@
+pyproject.toml
+src/mathresearch/__init__.py
+src/mathresearch/__main__.py
+src/mathresearch/cli.py
+src/mathresearch/errors.py
+src/mathresearch.egg-info/PKG-INFO
+src/mathresearch.egg-info/SOURCES.txt
+src/mathresearch.egg-info/dependency_links.txt
+src/mathresearch.egg-info/entry_points.txt
+src/mathresearch.egg-info/top_level.txt
+src/mathresearch/adapters/__init__.py
+src/mathresearch/adapters/discovery.py
