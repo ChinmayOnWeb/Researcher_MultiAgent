@@ -140,6 +140,20 @@ Evidence:
   passed 19 tests.
 - `py -m unittest discover -s tests -v` exited 0.
 
-No new live four-stage provider call was made in this round. The release gate
-remains unclaimed pending the bounded live demonstration and independent
-end-to-end re-review.
+## Round 4/5 live-provider verification
+
+A fresh bounded live run was executed after the schema remediation:
+
+```powershell
+py -m mathresearch init --request examples/quick-proof.json --run-dir runs/live-codex-proof-2 --json
+py -m mathresearch run --run-dir runs/live-codex-proof-2 --adapter codex --timeout-seconds 180 --json
+py -m mathresearch status --run-dir runs/live-codex-proof-2 --json
+```
+
+The durable run completed with four accepted stages and `report.md`. The
+provider accepted the repaired strict schemas at every stage and produced the
+elementary odd-sums proof. The report records `supported` only after a passing
+model-reasoning verification, and discloses that no external retrieval,
+experiments, or code execution occurred. This validates provider protocol and
+coordinator lifecycle; it is not a claim of mathematical proof beyond the
+documented model-reasoning scope.
