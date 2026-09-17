@@ -41,3 +41,21 @@ Exit code: `0`. Result: `Ran 40 tests in 3.588s — OK`.
 ## Limits carried to dependent tasks
 
 Task 3 intentionally leaves worker-packet semantics opaque until Task 4 supplies the substantive validator. Source-record and broker-receipt schemas remain Task 6 ownership; Task 3 preserves their durable authority boundary without defining their content format.
+
+## Fix round 1
+
+Root cause analysis found that the initial store verified captures only while iterating surviving action directories. A deleted finished-action directory was therefore invisible to the capture check and could be followed by state repair. The reducer also accepted a successful result before relating it to the recorded action role, compared timestamp source strings, and did not retain completed gate identities.
+
+The fix now requires an existing safe action directory and both digest-verified canonical captures for every committed `action_finished` record before any materialization. Successful worker results are validated through `validate_result(action.role, result)` during replay. Event timestamps are normalized to UTC instants before chronology comparison. Gate IDs cannot be reopened after answer; repeated response IDs are accepted only when their canonical payload digests match. `noop` is recognized as a decision kind and constrained to terminal/open-gate states. Initialization creates the events directory only while the acquired run lock is held.
+
+New red-green regressions cover deleted finished captures, arbitrary successful worker JSON, and equivalent offset UTC instants. The focused regression command passed after the changes, followed by the required suite:
+
+```powershell
+$env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_events tests.unit.test_research_store tests.unit.test_run_store -v
+```
+
+Exit code: `0`. Result: `Ran 43 tests in 3.813s — OK`.
+
+### Remaining review scope
+
+The action-result-to-source/receipt projection schemas, full route-table authorization, and atomic temporary hardlink alias rules require the downstream Task 6 broker schemas and the existing private temporary-alias verifier to be integrated. They are not fully addressed by this round's changes and must not be represented as complete fixes.

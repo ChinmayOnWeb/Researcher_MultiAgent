@@ -69,3 +69,14 @@ class ResearchEventTests(unittest.TestCase):
         init = event(1, "research_initialized", {"request": valid_request_payload()})
         duplicate = copy.deepcopy(gate); duplicate["sequence"] = 3
         with self.assertRaises(ValueError): replay_research_events([ResearchEvent.from_json(item) for item in [init, gate, duplicate]])
+
+    def test_success_result_must_match_the_recorded_worker_role(self) -> None:
+        history = quick_complete()
+        history[3]["body"]["result"] = {"arbitrary": "json"}
+        with self.assertRaises(ValueError):
+            replay_research_events([ResearchEvent.from_json(item) for item in history])
+
+    def test_normalizes_equivalent_utc_instants_for_chronology(self) -> None:
+        history = quick_complete()
+        history[1]["occurred_at"] = "2026-09-15T17:00:02-07:00"
+        self.assertEqual(replay_research_events([ResearchEvent.from_json(item) for item in history]).sequence, 5)

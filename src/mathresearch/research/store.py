@@ -49,6 +49,15 @@ def _check_layout(run_dir: Path, snapshot: ResearchSnapshot, events: tuple[Resea
         if path.exists(): _safe_directory(path, run_dir)
     intended = {item.body["action_id"]: item.body for item in events if item.event_type == "action_intended"}
     finished = {item.body["action_id"]: item.body for item in events if item.event_type == "action_finished"}
+    for action_id, outcome in finished.items():
+        action_dir = run_dir / "actions" / action_id
+        if not action_dir.exists():
+            raise RunCorruptError(run_dir, "finished action capture directory is missing")
+        _safe_directory(action_dir, run_dir)
+        for filename, digest_key in (("stdout.bin", "stdout_sha256"), ("stderr.log", "stderr_sha256")):
+            capture = action_dir / filename
+            if not capture.exists() or not capture.is_file() or hashlib.sha256(capture.read_bytes()).hexdigest() != outcome[digest_key]:
+                raise RunCorruptError(run_dir, "capture digest mismatch")
     if (run_dir / "actions").exists():
         for action_dir in (run_dir / "actions").iterdir():
             if action_dir.name.startswith("."): continue
@@ -60,11 +69,6 @@ def _check_layout(run_dir: Path, snapshot: ResearchSnapshot, events: tuple[Resea
                 _require_regular_file(child, run_dir)
             packet = action_dir / "packet.json"
             if packet.exists() and packet.read_bytes() != canonical_json_bytes(intended[action_dir.name]["packet"]): raise RunCorruptError(run_dir, "packet projection mismatch")
-            if action_dir.name in finished:
-                outcome = finished[action_dir.name]
-                for filename, digest_key in (("stdout.bin", "stdout_sha256"), ("stderr.log", "stderr_sha256")):
-                    capture = action_dir / filename
-                    if not capture.exists() or hashlib.sha256(capture.read_bytes()).hexdigest() != outcome[digest_key]: raise RunCorruptError(run_dir, "capture digest mismatch")
     for dirname in ("tools", "sources"):
         path = run_dir / dirname
         if path.exists():
@@ -117,11 +121,12 @@ def initialize_research(request_path: Path, run_dir: Path) -> ResearchSnapshot:
         raw = json.loads(request_path.read_text(encoding="utf-8")); request = ResearchRequest.from_json(raw)
     except (OSError, ValueError, TypeError) as exc: raise RunStoreError("invalid research request") from exc
     if run_dir.exists() and any(item.name != ".run.lock" for item in run_dir.iterdir()): raise RunStoreError("research destination is not empty")
-    run_dir.mkdir(parents=True, exist_ok=True); (run_dir / "events").mkdir(exist_ok=True)
+    run_dir.mkdir(parents=True, exist_ok=True)
     from datetime import datetime, timezone
     occurred_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     event = ResearchEvent.from_json({"schema_version": 3, "record_type": "research_event", "sequence": 1, "event_type": "research_initialized", "run_id": request.run_id, "occurred_at": occurred_at, "body": {"request": request.to_json()}})
     with acquire_run_lock(run_dir):
+        (run_dir / "events").mkdir(exist_ok=True)
         _atomic_write_new(run_dir / "events" / "000001.json", canonical_json_bytes(event.to_json()))
         snapshot = replay_research_events((event,)); _materialize(run_dir, snapshot, (event,))
     return snapshot

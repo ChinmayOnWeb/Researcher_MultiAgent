@@ -31,9 +31,9 @@ def _timestamp(value: Any, field: str) -> str:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError as exc:
         raise ValidationError(field, "must be a UTC timestamp") from exc
-    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
-        raise ValidationError(field, "must be a UTC timestamp")
-    return text
+    if parsed.tzinfo is None:
+        raise ValidationError(field, "must be an offset-aware timestamp")
+    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _sha(value: Any, field: str) -> str:
@@ -96,7 +96,7 @@ def _validate_body(kind: str, payload: Any) -> dict[str, Any]:
     if kind == "decision_recorded":
         require_exact_fields(data, kind, {"decision_id", "kind", "reason_code", "action", "details"})
         decision_kind = require_string(data["kind"], "decision.kind")
-        if decision_kind not in {"worker", "tool", "gate", "finish"}: raise ValidationError("decision.kind", "must be worker, tool, gate, or finish")
+        if decision_kind not in {"worker", "tool", "gate", "finish", "noop"}: raise ValidationError("decision.kind", "is invalid")
         action = None if data["action"] is None else validate_action(data["action"])
         if (decision_kind in {"worker", "tool"}) != (action is not None): raise ValidationError("decision.action", "must match decision kind")
         return {"decision_id": require_identifier(data["decision_id"], "decision_id"), "kind": decision_kind, "reason_code": require_string(data["reason_code"], "reason_code"), "action": action, "details": validate_decision_details(data["details"])}
@@ -159,7 +159,7 @@ class ResearchSnapshot:
 
 def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ...]) -> ResearchSnapshot:
     if not events: raise ValueError("history requires initialization")
-    request: ResearchRequest | None = None; initialized_at = ""; actions: dict[str, Mapping[str, Any]] = {}; decisions: list[Mapping[str, Any]] = []; intended: dict[str, Mapping[str, Any]] = {}; results: dict[str, Any] = {}; pending: str | None = None; gate: Mapping[str, Any] | None = None; terminal: Mapping[str, Any] | None = None; run_id = events[0].run_id; previous_time = ""
+    request: ResearchRequest | None = None; initialized_at = ""; actions: dict[str, Mapping[str, Any]] = {}; decisions: list[Mapping[str, Any]] = []; intended: dict[str, Mapping[str, Any]] = {}; results: dict[str, Any] = {}; pending: str | None = None; gate: Mapping[str, Any] | None = None; terminal: Mapping[str, Any] | None = None; gate_ids: set[str] = set(); response_digests: dict[str, str] = {}; run_id = events[0].run_id; previous_time = ""
     for expected, item in enumerate(events, 1):
         if item.sequence != expected or item.run_id != run_id or (previous_time and item.occurred_at < previous_time): raise ValueError("events must be contiguous and chronological")
         previous_time = item.occurred_at
@@ -171,6 +171,7 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
         elif request is None: raise ValueError("initialization required")
         elif item.event_type == "decision_recorded":
             action = item.body["action"]
+            if item.body["kind"] == "noop" and not (terminal is not None or gate is not None): raise ValueError("noop is only legal for terminal or open gates")
             if action is not None:
                 action_id = action["id"]
                 if action_id in actions or pending is not None: raise ValueError("duplicate or overlapping action")
@@ -186,13 +187,26 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
             action_id = item.body["action_id"]
             if pending != action_id or action_id not in intended: raise ValueError("finish without intent or wrong action")
             action = actions[action_id]
-            if item.body["outcome"] == "succeeded": results[action_id] = item.body["result"]
+            if item.body["outcome"] == "succeeded":
+                try:
+                    result = (validate_result(action["role"], item.body["result"])
+                              if action["kind"] == "worker" else dict(require_object(item.body["result"], "tool result")))
+                except ValidationError as exc:
+                    raise ValueError("successful result does not match action") from exc
+                results[action_id] = result
             pending = None
         elif item.event_type == "gate_opened":
-            if gate is not None: raise ValueError("duplicate gate")
+            if gate is not None or item.body["gate_id"] in gate_ids: raise ValueError("duplicate gate")
             gate = item.body
+            gate_ids.add(item.body["gate_id"])
         elif item.event_type == "gate_answered":
+            digest = hashlib.sha256(canonical_json_bytes(item.body["response"])).hexdigest()
+            prior = response_digests.get(item.body["response_id"])
+            if prior is not None:
+                if prior != digest: raise ValueError("response ID payload conflict")
+                continue
             if gate is None or gate["gate_id"] != item.body["gate_id"]: raise ValueError("unknown or closed gate")
+            response_digests[item.body["response_id"]] = digest
             gate = None
         elif item.event_type == "research_finished":
             if pending is not None: raise ValueError("finish while action pending")
