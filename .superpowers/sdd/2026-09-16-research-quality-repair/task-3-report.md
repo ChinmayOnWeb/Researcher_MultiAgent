@@ -105,3 +105,23 @@ The required decision/intent/capture/finish/gate/final-report fault-injection ma
 Added a legacy-store byte-preservation regression: it hand-authors a legacy request, initializes the legacy run, snapshots every committed file's relative path and bytes, calls legacy `load_run_status`, and requires exact equality afterward. The targeted test passed with `Ran 4 tests ... OK`; the required combined suite then passed with `Ran 45 tests in 3.495s — OK`.
 
 The requested v3 fault-injection matrix remains incomplete and is not claimed as covered by this follow-up. Existing `test_run_store` continues to exercise projection publication faults, link/reparse/hardlink checks, stale temporary alias validation, and immutable evidence repair for the legacy store.
+
+## Final Task 3 coverage pass
+
+`test_v3_fault_matrix_preserves_committed_boundaries` injects failures through the real v3 atomic store seams at decision event commit, intent packet projection, first capture, second capture, action-finish event commit, gate-response event commit, and final report materialization. It uses hand-authored events and verifies the exact durable boundary in each case: failed commits leave no event; a committed intent survives packet projection failure and recovers without a duplicate event; capture failures retain only the already-published capture; failed finish/gate commits leave their event sequence absent; and a committed final event repairs its report on status replay.
+
+Targeted command:
+
+```powershell
+$env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_store -v
+```
+
+Exit code: `0`. Result: `Ran 5 tests in 0.705s — OK`.
+
+Required command:
+
+```powershell
+$env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_events tests.unit.test_research_store tests.unit.test_run_store -v
+```
+
+Exit code: `0`. Result: `Ran 46 tests in 3.899s — OK`.
