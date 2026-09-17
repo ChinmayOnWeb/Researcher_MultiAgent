@@ -44,3 +44,11 @@ Result: `Ran 7 tests ... OK`.
 ## Concern for downstream integration
 
 The Task 3 `ResearchSnapshot` contract currently has no durable `additional_user_input` collection. To preserve the authoritative Snapshot boundary, Task 4 emits the required `additional_user_input` key as an empty list and does not reconstruct gate text from ambient event history or run files. The Section 7.4 requirement to append supplied gate text needs a future Snapshot projection or an explicit immutable packet input from the owner of gate routing; Task 4 must not infer it outside the supplied contract.
+
+## Fix round 1
+
+Replay now stores supplied non-null gate text as immutable exact `{gate_id,response_id,text}` records on `ResearchSnapshot.additional_user_input`. It validates the Section 7.4 envelope, decision permission, matched gate IDs, supplied-content requirement, non-supply emptiness, text cap, and source constraints before closing a gate. Packet construction copies only this projection.
+
+Packet validation now recursively checks source descriptor/record shapes, ToolReceipt envelopes, supplied-input records, role inputs, and output schema before rendering. Unknown nested keys and malformed types raise `ValidationError`.
+
+Verification: `$env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_prompts tests.unit.test_research_events tests.unit.test_research_store tests.unit.test_research_contracts -v` — 42 passed.

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from typing import Any
-from mathresearch.contracts.research_request import ResearchRequest
+from mathresearch.contracts.research_request import ResearchRequest, SourceInput
 from mathresearch.contracts.validation import ValidationError, require_exact_fields, require_identifier, require_object, require_string
 from mathresearch.research.contracts import result_schema, validate_action
 from mathresearch.research.events import ResearchSnapshot, canonical_json_bytes
@@ -89,7 +89,8 @@ def build_packet(request: ResearchRequest, snapshot: ResearchSnapshot, action: M
     if checked_action["kind"] != "worker": raise ValidationError("action.kind", "must be worker")
     sources = {source.id: source.to_json() for source in request.sources}
     sources.update(_plain_json(snapshot.sources))
-    packet = {"version": PROMPT_VERSION, "role": checked_action["role"], "action_id": checked_action["id"], "objective": request.objective, "question": request.question, "goal": request.goal, "context": request.context, "constraints": list(request.constraints), "audience": request.audience, "sources": _json_copy(sources, "sources"), "tool_results": _json_copy(snapshot.tool_results, "tool_results"), "inputs": _inputs(snapshot, checked_action), "additional_user_input": [], "output_schema": result_schema(checked_action["role"])}
+    packet = {"version": PROMPT_VERSION, "role": checked_action["role"], "action_id": checked_action["id"], "objective": request.objective, "question": request.question, "goal": request.goal, "context": request.context, "constraints": list(request.constraints), "audience": request.audience, "sources": _json_copy(sources, "sources"), "tool_results": _json_copy(snapshot.tool_results, "tool_results"), "inputs": _inputs(snapshot, checked_action), "additional_user_input": _json_copy(snapshot.additional_user_input, "additional_user_input"), "output_schema": result_schema(checked_action["role"])}
+    _validate_packet(checked_action["role"], packet)
     if len(canonical_json_bytes(packet)) > request.budgets["max_input_bytes"]: raise ValidationError("max_input_bytes", "packet exceeds request budget before intent")
     return packet
 
@@ -106,8 +107,43 @@ def _validate_packet(role: str, packet: Mapping[str, Any]) -> dict[str, Any]:
     if role == "branch":
         if set(inputs) not in (set(), {"deliverables", "subquestions"}, {"targeted_obligations"}): raise ValidationError("packet.inputs", "must be a permitted branch input shape")
     else: require_exact_fields(inputs, "packet.inputs", expected or set())
+    _validate_evidence(data)
     _json_copy(data, "packet")
     return dict(data)
+
+def _validate_evidence(packet: Mapping[str, Any]) -> None:
+    sources = require_object(packet["sources"], "packet.sources")
+    for source_id, source in sources.items():
+        require_identifier(source_id, "packet.sources key")
+        source_data = require_object(source, f"packet.sources.{source_id}")
+        if "kind" in source_data:
+            try: checked = SourceInput.from_json(source_data, field=f"packet.sources.{source_id}", fetch_sources=True)
+            except ValidationError: raise
+            if checked.id != source_id: raise ValidationError("packet.sources", "key must match source id")
+        else:
+            require_exact_fields(source_data, f"packet.sources.{source_id}", {"id", "origin", "title", "url", "published_at", "captured_at", "text", "sha256", "retrieval_receipt"})
+            if require_identifier(source_data["id"], "packet.source.id") != source_id: raise ValidationError("packet.sources", "key must match source id")
+            if source_data["origin"] not in {"user_context", "user_text", "retrieved"}: raise ValidationError("packet.source.origin", "is invalid")
+            require_string(source_data["title"], "packet.source.title"); require_string(source_data["captured_at"], "packet.source.captured_at"); require_string(source_data["text"], "packet.source.text")
+            sha = require_string(source_data["sha256"], "packet.source.sha256")
+            if len(sha) != 64 or any(char not in "0123456789abcdef" for char in sha): raise ValidationError("packet.source.sha256", "must be lowercase SHA-256")
+    supplied = packet["additional_user_input"]
+    if not isinstance(supplied, list): raise ValidationError("packet.additional_user_input", "must be an array")
+    for index, item in enumerate(supplied):
+        item = require_object(item, f"packet.additional_user_input[{index}]")
+        require_exact_fields(item, f"packet.additional_user_input[{index}]", {"gate_id", "response_id", "text"})
+        require_identifier(item["gate_id"], f"packet.additional_user_input[{index}].gate_id"); require_identifier(item["response_id"], f"packet.additional_user_input[{index}].response_id")
+        text = require_string(item["text"], f"packet.additional_user_input[{index}].text")
+        if len(text) > 16000: raise ValidationError("packet.additional_user_input", "text must be at most 16000 characters")
+    receipts = require_object(packet["tool_results"], "packet.tool_results")
+    for tool_id, receipt in receipts.items():
+        require_identifier(tool_id, "packet.tool_results key"); receipt = require_object(receipt, f"packet.tool_results.{tool_id}")
+        require_exact_fields(receipt, f"packet.tool_results.{tool_id}", {"tool_id", "request", "status", "result", "error", "scope", "implementation_version"})
+        if require_identifier(receipt["tool_id"], "packet.tool_result.tool_id") != tool_id: raise ValidationError("packet.tool_results", "key must match tool_id")
+        request = require_object(receipt["request"], "packet.tool_result.request"); require_exact_fields(request, "packet.tool_result.request", {"id", "operation", "arguments"})
+        require_identifier(request["id"], "packet.tool_result.request.id"); require_object(request["arguments"], "packet.tool_result.request.arguments")
+        if receipt["status"] not in {"succeeded", "failed", "denied"}: raise ValidationError("packet.tool_result.status", "is invalid")
+        require_string(receipt["scope"], "packet.tool_result.scope"); require_string(receipt["implementation_version"], "packet.tool_result.implementation_version")
 
 def build_prompt(role: str, packet: Mapping[str, Any]) -> str:
     """Render literal substantive instruction text followed only by canonical packet JSON."""

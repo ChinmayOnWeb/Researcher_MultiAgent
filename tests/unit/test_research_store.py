@@ -15,6 +15,16 @@ from tests.unit.test_research_contracts import valid_request_payload
 
 
 class ResearchStoreTests(unittest.TestCase):
+    def test_store_replays_supplied_gate_text_into_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); run = self._new_run(root / "gate-text")
+            gate = self._event(2, "gate_opened", {"gate_id": "g0001", "kind": "missing_inputs", "questions": ["q"], "allowed_response": ["supply"], "resume_token": "0" * 64})
+            response = {"schema_version": 3, "record_type": "research_gate_response", "gate_id": "g0001", "response_id": "r0001", "decision": "supply", "text": "exact\nπ", "sources": []}
+            answer = self._event(3, "gate_answered", {"gate_id": "g0001", "response_id": "r0001", "response": response})
+            with open_research_run(run) as locked:
+                locked.append(gate); locked.append(answer)
+            self.assertEqual(load_research_status(run).additional_user_input, ({"gate_id": "g0001", "response_id": "r0001", "text": "exact\nπ"},))
+
     def _new_run(self, root: Path, payload: dict[str, object] | None = None) -> Path:
         root.mkdir(parents=True, exist_ok=True)
         request = root / "request.json"; request.write_text(json.dumps(payload or valid_request_payload()), encoding="utf-8")

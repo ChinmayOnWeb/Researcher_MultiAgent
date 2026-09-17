@@ -94,18 +94,26 @@ def _gate_source_inputs(response: Any, *, gate_id: str, response_id: str,
         raise ValidationError("gate response", "must be a version-three research gate response")
     if data["gate_id"] != gate_id or data["response_id"] != response_id:
         raise ValidationError("gate response", "identifiers must match the answered gate event")
-    if data["decision"] not in allowed_response:
+    if data["decision"] not in {"supply", "continue_limited", "cancel"} or data["decision"] not in allowed_response:
         raise ValidationError("gate response.decision", "is not accepted by the open gate")
     sources = data["sources"]
     if not isinstance(sources, list) or len(sources) > 6:
         raise ValidationError("gate response.sources", "must be an array with at most 6 entries")
+    text = data["text"]
+    if text is not None and (not isinstance(text, str) or not text or len(text) > 16000):
+        raise ValidationError("gate response.text", "must be null or a 1..16000 character string")
     if data["decision"] != "supply":
-        if sources:
+        if text is not None or sources:
             raise ValidationError("gate response.sources", "require a supply decision")
         return ()
-    return tuple(SourceInput.from_json(item, field=f"gate response.sources[{index}]",
+    if text is None and not sources:
+        raise ValidationError("gate response", "supply requires text or sources")
+    parsed = tuple(SourceInput.from_json(item, field=f"gate response.sources[{index}]",
                                       fetch_sources=fetch_sources)
                  for index, item in enumerate(sources))
+    if len({item.id for item in parsed}) != len(parsed):
+        raise ValidationError("gate response.sources", "source IDs must be unique")
+    return parsed
 
 
 @dataclass(frozen=True)
@@ -193,6 +201,7 @@ class ResearchSnapshot:
     results: Mapping[str, Any]
     sources: Mapping[str, Any]
     tool_results: Mapping[str, Any]
+    additional_user_input: tuple[Mapping[str, str], ...]
     pending_action_id: str | None
     pending_gate: Mapping[str, Any] | None
     model_calls_used: int
@@ -210,7 +219,7 @@ class ResearchSnapshot:
 
 def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ...]) -> ResearchSnapshot:
     if not events: raise ValueError("history requires initialization")
-    request: ResearchRequest | None = None; initialized_at = ""; actions: dict[str, Mapping[str, Any]] = {}; decisions: list[Mapping[str, Any]] = []; intended: dict[str, Mapping[str, Any]] = {}; results: dict[str, Any] = {}; source_descriptors: dict[str, dict[str, Any]] = {}; pending: str | None = None; gate: Mapping[str, Any] | None = None; terminal: Mapping[str, Any] | None = None; gate_ids: set[str] = set(); response_digests: dict[str, str] = {}; run_id = events[0].run_id; previous_time = ""
+    request: ResearchRequest | None = None; initialized_at = ""; actions: dict[str, Mapping[str, Any]] = {}; decisions: list[Mapping[str, Any]] = []; intended: dict[str, Mapping[str, Any]] = {}; results: dict[str, Any] = {}; source_descriptors: dict[str, dict[str, Any]] = {}; additional_user_input: list[Mapping[str, str]] = []; pending: str | None = None; gate: Mapping[str, Any] | None = None; terminal: Mapping[str, Any] | None = None; gate_ids: set[str] = set(); response_digests: dict[str, str] = {}; run_id = events[0].run_id; previous_time = ""
     for expected, item in enumerate(events, 1):
         if item.sequence != expected or item.run_id != run_id or (previous_time and item.occurred_at < previous_time): raise ValueError("events must be contiguous and chronological")
         previous_time = item.occurred_at
@@ -277,6 +286,9 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
                 if source.id in source_descriptors:
                     raise ValueError("gate source ID replaces an accepted descriptor")
                 source_descriptors[source.id] = source.to_json()
+            text = item.body["response"].get("text") if isinstance(item.body["response"], Mapping) else None
+            if text is not None:
+                additional_user_input.append(MappingProxyType({"gate_id": item.body["gate_id"], "response_id": item.body["response_id"], "text": text}))
             response_digests[response_key] = digest
             gate = None
         elif item.event_type == "research_finished":
@@ -285,4 +297,4 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
     if request is None: raise ValueError("initialization required")
     status = terminal["status"] if terminal else ("awaiting_human" if gate else ("running" if pending else "ready"))
     model = sum(1 for action_id in intended if actions[action_id]["kind"] == "worker"); tools = len(intended) - model
-    return ResearchSnapshot(request, initialized_at, len(events), status, None, tuple(decisions), MappingProxyType(actions), MappingProxyType(results), MappingProxyType({}), MappingProxyType({}), pending, gate, model, tools, sum(1 for a in actions.values() if a["branch"] in {"a", "b", "c"}), 0, None, None, None if terminal is None else terminal["assessment"], None if terminal is None else terminal["reason"])
+    return ResearchSnapshot(request, initialized_at, len(events), status, None, tuple(decisions), MappingProxyType(actions), MappingProxyType(results), MappingProxyType({}), MappingProxyType({}), tuple(additional_user_input), pending, gate, model, tools, sum(1 for a in actions.values() if a["branch"] in {"a", "b", "c"}), 0, None, None, None if terminal is None else terminal["assessment"], None if terminal is None else terminal["reason"])

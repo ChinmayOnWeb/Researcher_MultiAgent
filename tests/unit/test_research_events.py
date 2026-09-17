@@ -62,6 +62,21 @@ def quick_complete() -> list[dict[str, object]]:
 
 
 class ResearchEventTests(unittest.TestCase):
+    def test_supplied_gate_text_is_immutable_snapshot_input(self) -> None:
+        gate = event(2, "gate_opened", {"gate_id": "g0001", "kind": "missing_inputs", "questions": ["q"], "allowed_response": ["supply"], "resume_token": "0" * 64})
+        response = {"schema_version": 3, "record_type": "research_gate_response", "gate_id": "g0001", "response_id": "r0001", "decision": "supply", "text": "quoted\nUnicode: π", "sources": []}
+        snapshot = replay_research_events([ResearchEvent.from_json(event(1, "research_initialized", {"request": valid_request_payload()})), ResearchEvent.from_json(gate), ResearchEvent.from_json(event(3, "gate_answered", {"gate_id": "g0001", "response_id": "r0001", "response": response}))])
+        self.assertEqual(snapshot.additional_user_input, ({"gate_id": "g0001", "response_id": "r0001", "text": "quoted\nUnicode: π"},))
+
+    def test_gate_response_rejects_mismatched_or_invalid_supply(self) -> None:
+        gate = event(2, "gate_opened", {"gate_id": "g0001", "kind": "missing_inputs", "questions": ["q"], "allowed_response": ["supply"], "resume_token": "0" * 64})
+        valid = {"schema_version": 3, "record_type": "research_gate_response", "gate_id": "g0001", "response_id": "r0001", "decision": "supply", "text": "text", "sources": []}
+        for replacement in ({"gate_id": "g0002"}, {"text": None}, {"decision": "cancel", "text": "text"}, {"text": "x" * 16001}):
+            response = copy.deepcopy(valid); response.update(replacement)
+            history = [event(1, "research_initialized", {"request": valid_request_payload()}), gate, event(3, "gate_answered", {"gate_id": "g0001", "response_id": "r0001", "response": response})]
+            with self.subTest(replacement=replacement):
+                with self.assertRaises(ValueError): replay_research_events([ResearchEvent.from_json(item) for item in history])
+
     def test_hand_authored_quick_complete_replays(self) -> None:
         snapshot = replay_research_events([ResearchEvent.from_json(item) for item in quick_complete()])
         self.assertEqual(snapshot.status, "complete")
