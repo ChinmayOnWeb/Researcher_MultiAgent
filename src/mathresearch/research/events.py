@@ -59,6 +59,22 @@ def _telemetry(value: Any) -> dict[str, Any]:
     return checked
 
 
+def validate_tool_result(operation: str, value: Any) -> dict[str, Any]:
+    """Accept only the currently durable tool shape; Task 6 owns semantics."""
+    data = require_object(value, "tool result")
+    if operation != "fetch_source":
+        raise ValidationError("tool result", "operation result schema is not available before Task 6")
+    require_exact_fields(data, "tool result", {"source"})
+    source = require_object(data["source"], "tool result.source")
+    if "id" not in source:
+        raise ValidationError("tool result.source", "missing required field 'id'")
+    require_identifier(source["id"], "tool result.source.id")
+    checked = {key: value for key, value in source.items()}
+    if len(canonical_json_bytes({"source": checked})) > 65536:
+        raise ValidationError("tool result", "canonical JSON must be at most 65536 bytes")
+    return {"source": checked}
+
+
 @dataclass(frozen=True)
 class ResearchEvent:
     sequence: int
@@ -171,7 +187,7 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
         elif request is None: raise ValueError("initialization required")
         elif item.event_type == "decision_recorded":
             action = item.body["action"]
-            if item.body["kind"] == "noop" and not (terminal is not None or gate is not None): raise ValueError("noop is only legal for terminal or open gates")
+            if item.body["kind"] == "noop": raise ValueError("noop decisions are not persisted")
             if action is not None:
                 action_id = action["id"]
                 if action_id in actions or pending is not None: raise ValueError("duplicate or overlapping action")
@@ -190,7 +206,7 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
             if item.body["outcome"] == "succeeded":
                 try:
                     result = (validate_result(action["role"], item.body["result"])
-                              if action["kind"] == "worker" else dict(require_object(item.body["result"], "tool result")))
+                              if action["kind"] == "worker" else validate_tool_result(action["role"], item.body["result"]))
                 except ValidationError as exc:
                     raise ValueError("successful result does not match action") from exc
                 results[action_id] = result
@@ -201,12 +217,13 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
             gate_ids.add(item.body["gate_id"])
         elif item.event_type == "gate_answered":
             digest = hashlib.sha256(canonical_json_bytes(item.body["response"])).hexdigest()
-            prior = response_digests.get(item.body["response_id"])
+            response_key = f"{item.body['gate_id']}\0{item.body['response_id']}"
+            prior = response_digests.get(response_key)
             if prior is not None:
                 if prior != digest: raise ValueError("response ID payload conflict")
                 continue
             if gate is None or gate["gate_id"] != item.body["gate_id"]: raise ValueError("unknown or closed gate")
-            response_digests[item.body["response_id"]] = digest
+            response_digests[response_key] = digest
             gate = None
         elif item.event_type == "research_finished":
             if pending is not None: raise ValueError("finish while action pending")

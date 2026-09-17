@@ -67,3 +67,21 @@ The remaining structural store boundary is now closed without defining Task 6 se
 The store now uses the legacy `_verify_temporary_hardlink_aliases` routine for root, event, action, source, and tool projection directories. Every entry, including a dot-prefixed writer temporary, is classified as a documented temporary alias or rejected; aliases are accepted only when the immutable target identity and hardlink count verify.
 
 Task 3 validates the Section 6 local action structure through Task 2's `validate_action`, enforces contiguous action lifecycle/dependencies and terminal/gate legality, and deliberately defers Section 7 routing-table reason-code selection to Task 7. It does not make route policy decisions.
+
+## Fix round 2
+
+Tool result handling is now operation-bound at replay. Until Task 6 supplies each broker operation's semantic schema, only `fetch_source` has a durable structural result shape: an exact result object containing `source`, with an identifier-validated source ID and a bounded canonical JSON encoding. Other tool result shapes are rejected rather than treated as authority. This validation occurs before store materialization, so traversal strings, absolute paths, separators, dot names, invalid identifiers, and oversized payloads cannot reach `sources/<source-id>`.
+
+Gate response idempotence is keyed by the pair of gate ID and response ID. A reused pair requires the identical canonical response digest; a different gate cannot reuse that authorization. Persisted `noop` decisions are rejected: Section 6 permits a no-op return value, not a no-op event. Capture files are included in the immutable-target alias verifier while SHA-256 capture checks remain mandatory.
+
+Initialization now rechecks the destination while holding the run lock before creating `events/` or publishing an event. The unavoidable empty directory creation is only used to obtain that lock target.
+
+Verification run:
+
+```powershell
+$env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_events tests.unit.test_research_store tests.unit.test_run_store -v
+```
+
+Exit code: `0`. Result: `Ran 43 tests in 3.753s — OK`.
+
+The focused existing tests exercised capture corruption, link/reparse/hardlink and legacy v1/v2 compatibility through `test_run_store`. New dedicated Task 3 fault-injection and v2-byte fixture tests were not added in this round and are not claimed as evidence.
