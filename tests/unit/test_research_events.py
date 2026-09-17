@@ -80,3 +80,10 @@ class ResearchEventTests(unittest.TestCase):
         history = quick_complete()
         history[1]["occurred_at"] = "2026-09-15T17:00:02-07:00"
         self.assertEqual(replay_research_events([ResearchEvent.from_json(item) for item in history]).sequence, 5)
+
+    def test_decision_action_kind_and_open_gate_finish_are_illegal(self) -> None:
+        decision = event(2, "decision_recorded", {"decision_id": "d0001", "kind": "worker", "reason_code": "frame_request", "action": {**ACTION, "kind": "tool", "role": "fetch_source", "payload": {"id": "tool-one", "operation": "fetch_source", "arguments": {"source_id": "source-one"}}}, "details": DETAILS})
+        with self.assertRaises(ValueError): ResearchEvent.from_json(decision)
+        gate = event(2, "gate_opened", {"gate_id": "g0001", "kind": "missing_inputs", "questions": ["q"], "allowed_response": ["supply"], "resume_token": "0" * 64})
+        finish = event(3, "research_finished", {"status": "incomplete", "assessment": {}, "reason": "x", "report_markdown": "", "log_markdown": ""})
+        with self.assertRaises(ValueError): replay_research_events([ResearchEvent.from_json(x) for x in [event(1, "research_initialized", {"request": valid_request_payload()}), gate, finish]])

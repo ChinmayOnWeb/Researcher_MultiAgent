@@ -85,3 +85,17 @@ $env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_events tests.unit
 Exit code: `0`. Result: `Ran 43 tests in 3.753s — OK`.
 
 The focused existing tests exercised capture corruption, link/reparse/hardlink and legacy v1/v2 compatibility through `test_run_store`. New dedicated Task 3 fault-injection and v2-byte fixture tests were not added in this round and are not claimed as evidence.
+
+## Fix round 3
+
+`decision_recorded` now requires its decision kind and embedded Action kind to agree, so a worker decision cannot launch a tool Action or vice versa. Replay also rejects `research_finished` while a human gate remains open, independently of Task 7 routing reasons.
+
+Targeted reducer verification:
+
+```powershell
+$env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_events -v
+```
+
+Exit code: `0`. Result: `Ran 7 tests in 0.007s — OK`.
+
+The required decision/intent/capture/finish/gate/final-report fault-injection matrix and a dedicated hand-authored v2 byte-preservation fixture remain missing. They are not claimed as implemented in this commit.

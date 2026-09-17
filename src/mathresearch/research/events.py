@@ -115,6 +115,8 @@ def _validate_body(kind: str, payload: Any) -> dict[str, Any]:
         if decision_kind not in {"worker", "tool", "gate", "finish", "noop"}: raise ValidationError("decision.kind", "is invalid")
         action = None if data["action"] is None else validate_action(data["action"])
         if (decision_kind in {"worker", "tool"}) != (action is not None): raise ValidationError("decision.action", "must match decision kind")
+        if action is not None and action["kind"] != decision_kind:
+            raise ValidationError("decision.action.kind", "must match decision kind")
         return {"decision_id": require_identifier(data["decision_id"], "decision_id"), "kind": decision_kind, "reason_code": require_string(data["reason_code"], "reason_code"), "action": action, "details": validate_decision_details(data["details"])}
     if kind == "action_intended":
         require_exact_fields(data, kind, {"action_id", "packet", "packet_sha256"})
@@ -226,7 +228,7 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
             response_digests[response_key] = digest
             gate = None
         elif item.event_type == "research_finished":
-            if pending is not None: raise ValueError("finish while action pending")
+            if pending is not None or gate is not None: raise ValueError("finish while action or gate pending")
             terminal = item.body
     if request is None: raise ValueError("initialization required")
     status = terminal["status"] if terminal else ("awaiting_human" if gate else ("running" if pending else "ready"))
