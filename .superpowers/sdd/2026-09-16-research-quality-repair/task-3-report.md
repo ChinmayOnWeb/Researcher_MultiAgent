@@ -125,3 +125,47 @@ $env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_events tests.unit
 ```
 
 Exit code: `0`. Result: `Ran 46 tests in 3.899s — OK`.
+
+## Fix round 4
+
+Replay now binds every successful `fetch_source` result to durable user authorization. The reducer builds the accepted descriptor catalog from the initialized request and from version-three gate responses that include source additions. Gate additions must use the existing `SourceInput` validator, a `supply` decision allowed by the open gate, matching gate/response IDs, unique non-replacing source IDs, the initial fetch capability, and the six-descriptor aggregate limit. A fetch action resolves only its validated `payload.arguments.source_id`; the result's safely validated `source.id` and exact `source.url` must both match that authorized URL descriptor. The rest of the source object remains opaque and byte-bounded, so this round does not define Task 6's `SourceRecord` or retrieval-receipt semantics.
+
+The missing post-commit recovery coverage exposed a store bug rather than only a test omission. After `action_finished` committed, failure while publishing `receipt.json` or `source.json` left an authorized projection directory without its expected file. Layout validation treated that recoverable absence as corruption and never reached replay materialization. Layout checks now accept an absent derived result/receipt/source file while still rejecting any existing projection whose bytes differ from the committed event. Existing `result.json` is also checked against its authorizing finish event.
+
+`test_finished_tool_result_recovers_after_each_post_commit_projection_failure` exercises the real atomic-write seam separately for `actions/a0001/result.json`, `tools/a0001/receipt.json`, and `sources/source-one/source.json`. In each case it asserts that the immutable finish event exists before recovery, all three projections are reconstructed from history, the recovered result is usable, the event filename set is unchanged, and exactly one `action_finished` publication exists. The earlier decision commit, intent projection, first/second capture, finish commit, gate-response commit, and final-report fault points remain covered by the existing matrix.
+
+The initialization-generated v1 compatibility check was replaced with a complete hand-authored v2 Quick fixture: one v1 initialization event followed by fourteen explicit v2 workflow events through all four intended/finished/accepted stages and terminal completion. Its request, final v2 state, packets, captures, accepted results, report, and lock file are written directly by the test. The test snapshots all 35 file paths and byte strings, calls legacy `load_run_status`, verifies the completed sequence-15 state, and requires the entire file-byte map to remain identical.
+
+Red evidence before the fixes:
+
+```powershell
+$env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_events.ResearchEventTests.test_fetch_result_must_match_an_authorized_requested_url_descriptor tests.unit.test_research_events.ResearchEventTests.test_fetch_result_accepts_a_url_descriptor_from_an_accepted_gate tests.unit.test_research_store.ResearchStoreTests.test_finished_tool_result_recovers_after_each_post_commit_projection_failure -v
+```
+
+Exit code: `1`. Unauthorized requested IDs, mismatched result IDs, and mismatched URLs were accepted; recovery after receipt/source publication failures stopped with `RunCorruptError`. A separate red run proved that a gate response using `supply` when the open gate did not allow it was incorrectly accepted.
+
+Focused verification:
+
+```powershell
+$env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_events tests.unit.test_research_store tests.unit.test_run_store -v
+```
+
+Exit code: `0`. Result: `Ran 49 tests in 5.367s — OK`.
+
+Targeted compatibility and contract regressions:
+
+```powershell
+$env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_contracts tests.unit.test_quick_store -v
+```
+
+Exit code: `0`. Result: `Ran 19 tests in 0.700s — OK`.
+
+Broad unit regression:
+
+```powershell
+$env:PYTHONPATH='src'; py -m unittest discover -s tests\unit
+```
+
+Exit code: `0`. Result: `Ran 174 tests in 35.259s — OK`.
+
+Route-table reason-code selection remains Task 7 ownership. This round changes no routing policy and adds no Task 6 source or receipt schema.

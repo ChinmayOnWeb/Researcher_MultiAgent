@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Any, Mapping
 
-from mathresearch.contracts.research_request import ResearchRequest
+from mathresearch.contracts.research_request import ResearchRequest, SourceInput
 from mathresearch.contracts.validation import ValidationError, require_exact_fields, require_identifier, require_nonnegative_integer, require_object, require_string
 from mathresearch.research.contracts import validate_action, validate_decision_details, validate_result
 
@@ -59,7 +59,7 @@ def _telemetry(value: Any) -> dict[str, Any]:
     return checked
 
 
-def validate_tool_result(operation: str, value: Any) -> dict[str, Any]:
+def validate_tool_result(operation: str, value: Any, *, requested_source: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Accept only the currently durable tool shape; Task 6 owns semantics."""
     data = require_object(value, "tool result")
     if operation != "fetch_source":
@@ -68,11 +68,44 @@ def validate_tool_result(operation: str, value: Any) -> dict[str, Any]:
     source = require_object(data["source"], "tool result.source")
     if "id" not in source:
         raise ValidationError("tool result.source", "missing required field 'id'")
-    require_identifier(source["id"], "tool result.source.id")
+    source_id = require_identifier(source["id"], "tool result.source.id")
+    if requested_source is None or requested_source.get("kind") != "url":
+        raise ValidationError("tool result.source.id", "is not an authorized URL source")
+    if source_id != requested_source["id"]:
+        raise ValidationError("tool result.source.id", "must match the requested source descriptor")
+    source_url = require_string(source.get("url"), "tool result.source.url")
+    if source_url != requested_source["url"]:
+        raise ValidationError("tool result.source.url", "must match the requested source descriptor")
     checked = {key: value for key, value in source.items()}
     if len(canonical_json_bytes({"source": checked})) > 65536:
         raise ValidationError("tool result", "canonical JSON must be at most 65536 bytes")
     return {"source": checked}
+
+
+def _gate_source_inputs(response: Any, *, gate_id: str, response_id: str,
+                        fetch_sources: bool, allowed_response: tuple[str, ...]) -> tuple[SourceInput, ...]:
+    """Validate only the gate fields needed to authorize added source descriptors."""
+    if not isinstance(response, Mapping) or "sources" not in response:
+        return ()
+    data = require_object(response, "gate response")
+    require_exact_fields(data, "gate response", {"schema_version", "record_type", "gate_id",
+                         "response_id", "decision", "text", "sources"})
+    if data["schema_version"] != 3 or data["record_type"] != "research_gate_response":
+        raise ValidationError("gate response", "must be a version-three research gate response")
+    if data["gate_id"] != gate_id or data["response_id"] != response_id:
+        raise ValidationError("gate response", "identifiers must match the answered gate event")
+    if data["decision"] not in allowed_response:
+        raise ValidationError("gate response.decision", "is not accepted by the open gate")
+    sources = data["sources"]
+    if not isinstance(sources, list) or len(sources) > 6:
+        raise ValidationError("gate response.sources", "must be an array with at most 6 entries")
+    if data["decision"] != "supply":
+        if sources:
+            raise ValidationError("gate response.sources", "require a supply decision")
+        return ()
+    return tuple(SourceInput.from_json(item, field=f"gate response.sources[{index}]",
+                                      fetch_sources=fetch_sources)
+                 for index, item in enumerate(sources))
 
 
 @dataclass(frozen=True)
@@ -177,7 +210,7 @@ class ResearchSnapshot:
 
 def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ...]) -> ResearchSnapshot:
     if not events: raise ValueError("history requires initialization")
-    request: ResearchRequest | None = None; initialized_at = ""; actions: dict[str, Mapping[str, Any]] = {}; decisions: list[Mapping[str, Any]] = []; intended: dict[str, Mapping[str, Any]] = {}; results: dict[str, Any] = {}; pending: str | None = None; gate: Mapping[str, Any] | None = None; terminal: Mapping[str, Any] | None = None; gate_ids: set[str] = set(); response_digests: dict[str, str] = {}; run_id = events[0].run_id; previous_time = ""
+    request: ResearchRequest | None = None; initialized_at = ""; actions: dict[str, Mapping[str, Any]] = {}; decisions: list[Mapping[str, Any]] = []; intended: dict[str, Mapping[str, Any]] = {}; results: dict[str, Any] = {}; source_descriptors: dict[str, dict[str, Any]] = {}; pending: str | None = None; gate: Mapping[str, Any] | None = None; terminal: Mapping[str, Any] | None = None; gate_ids: set[str] = set(); response_digests: dict[str, str] = {}; run_id = events[0].run_id; previous_time = ""
     for expected, item in enumerate(events, 1):
         if item.sequence != expected or item.run_id != run_id or (previous_time and item.occurred_at < previous_time): raise ValueError("events must be contiguous and chronological")
         previous_time = item.occurred_at
@@ -186,6 +219,7 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
             if request is not None or expected != 1: raise ValueError("initialization must occur once first")
             request = ResearchRequest.from_json(item.body["request"]); initialized_at = item.occurred_at
             if request.run_id != run_id: raise ValueError("request run_id mismatch")
+            source_descriptors = {source.id: source.to_json() for source in request.sources}
         elif request is None: raise ValueError("initialization required")
         elif item.event_type == "decision_recorded":
             action = item.body["action"]
@@ -207,8 +241,13 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
             action = actions[action_id]
             if item.body["outcome"] == "succeeded":
                 try:
-                    result = (validate_result(action["role"], item.body["result"])
-                              if action["kind"] == "worker" else validate_tool_result(action["role"], item.body["result"]))
+                    if action["kind"] == "worker":
+                        result = validate_result(action["role"], item.body["result"])
+                    else:
+                        requested_id = action["payload"]["arguments"].get("source_id")
+                        requested_source = source_descriptors.get(requested_id) if isinstance(requested_id, str) else None
+                        result = validate_tool_result(action["role"], item.body["result"],
+                                                      requested_source=requested_source)
                 except ValidationError as exc:
                     raise ValueError("successful result does not match action") from exc
                 results[action_id] = result
@@ -225,6 +264,19 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
                 if prior != digest: raise ValueError("response ID payload conflict")
                 continue
             if gate is None or gate["gate_id"] != item.body["gate_id"]: raise ValueError("unknown or closed gate")
+            try:
+                additions = _gate_source_inputs(item.body["response"], gate_id=item.body["gate_id"],
+                                                response_id=item.body["response_id"],
+                                                fetch_sources=request.capabilities["fetch_sources"],
+                                                allowed_response=tuple(gate["allowed_response"]))
+            except ValidationError as exc:
+                raise ValueError("invalid gate source authorization") from exc
+            if len(source_descriptors) + len(additions) > 6:
+                raise ValueError("source descriptor limit exceeded")
+            for source in additions:
+                if source.id in source_descriptors:
+                    raise ValueError("gate source ID replaces an accepted descriptor")
+                source_descriptors[source.id] = source.to_json()
             response_digests[response_key] = digest
             gate = None
         elif item.event_type == "research_finished":

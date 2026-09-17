@@ -27,6 +27,29 @@ TELEMETRY = {"duration_ms": 1, "input_bytes": 1, "output_bytes": 1, "model_obser
              "reasoning_tokens": None, "cost_usd": None}
 
 
+def fetch_history(*, requested_id: str = "source-one", result_id: str = "source-one",
+                  descriptor_url: str = "https://example.test/source",
+                  result_url: str = "https://example.test/source") -> list[dict[str, object]]:
+    request = valid_request_payload()
+    request["capabilities"]["fetch_sources"] = True
+    request["sources"] = [{"id": "source-one", "kind": "url", "title": "Source one",
+                           "text": None, "url": descriptor_url, "published_at": None}]
+    action = {"id": "a0001", "kind": "tool", "role": "fetch_source", "branch": None,
+              "round": 0, "dependencies": [], "payload": {"id": "fetch-one",
+              "operation": "fetch_source", "arguments": {"source_id": requested_id}}}
+    return [
+        event(1, "research_initialized", {"request": request}),
+        event(2, "decision_recorded", {"decision_id": "d0001", "kind": "tool",
+              "reason_code": "acquire_source", "action": action, "details": DETAILS}),
+        event(3, "action_intended", {"action_id": "a0001", "packet": PACKET,
+              "packet_sha256": SHA}),
+        event(4, "action_finished", {"action_id": "a0001", "outcome": "succeeded",
+              "exit_code": 0, "stdout_sha256": "0" * 64, "stderr_sha256": "1" * 64,
+              "result": {"source": {"id": result_id, "url": result_url}}, "error": None,
+              "telemetry": TELEMETRY}),
+    ]
+
+
 def quick_complete() -> list[dict[str, object]]:
     return [
         event(1, "research_initialized", {"request": valid_request_payload()}),
@@ -87,3 +110,50 @@ class ResearchEventTests(unittest.TestCase):
         gate = event(2, "gate_opened", {"gate_id": "g0001", "kind": "missing_inputs", "questions": ["q"], "allowed_response": ["supply"], "resume_token": "0" * 64})
         finish = event(3, "research_finished", {"status": "incomplete", "assessment": {}, "reason": "x", "report_markdown": "", "log_markdown": ""})
         with self.assertRaises(ValueError): replay_research_events([ResearchEvent.from_json(x) for x in [event(1, "research_initialized", {"request": valid_request_payload()}), gate, finish]])
+
+    def test_fetch_result_must_match_an_authorized_requested_url_descriptor(self) -> None:
+        snapshot = replay_research_events([ResearchEvent.from_json(item) for item in fetch_history()])
+        self.assertEqual(snapshot.results["a0001"]["source"]["id"], "source-one")
+
+        for history in (
+            fetch_history(requested_id="not-authorized", result_id="not-authorized"),
+            fetch_history(result_id="different-source"),
+            fetch_history(result_id="../unsafe"),
+            fetch_history(result_url="https://example.test/different"),
+        ):
+            with self.subTest(result=history[-1]["body"]):
+                with self.assertRaises(ValueError):
+                    replay_research_events([ResearchEvent.from_json(item) for item in history])
+
+    def test_fetch_result_accepts_a_url_descriptor_from_an_accepted_gate(self) -> None:
+        request = valid_request_payload()
+        request["capabilities"]["fetch_sources"] = True
+        gate_source = {"id": "gate-source", "kind": "url", "title": "Gate source",
+                       "text": None, "url": "https://example.test/gate", "published_at": None}
+        gate = event(2, "gate_opened", {"gate_id": "g0001", "kind": "request_evidence",
+                     "questions": ["Provide a source."], "allowed_response": ["supply"],
+                     "resume_token": "0" * 64})
+        answer = event(3, "gate_answered", {"gate_id": "g0001", "response_id": "r0001",
+                       "response": {"schema_version": 3, "record_type": "research_gate_response",
+                       "gate_id": "g0001", "response_id": "r0001", "decision": "supply",
+                       "text": None, "sources": [gate_source]}})
+        action = {"id": "a0001", "kind": "tool", "role": "fetch_source", "branch": None,
+                  "round": 0, "dependencies": [], "payload": {"id": "fetch-gate",
+                  "operation": "fetch_source", "arguments": {"source_id": "gate-source"}}}
+        history = [event(1, "research_initialized", {"request": request}), gate, answer,
+                   event(4, "decision_recorded", {"decision_id": "d0001", "kind": "tool",
+                         "reason_code": "acquire_source", "action": action, "details": DETAILS}),
+                   event(5, "action_intended", {"action_id": "a0001", "packet": PACKET,
+                         "packet_sha256": SHA}),
+                   event(6, "action_finished", {"action_id": "a0001", "outcome": "succeeded",
+                         "exit_code": 0, "stdout_sha256": "0" * 64, "stderr_sha256": "1" * 64,
+                         "result": {"source": {"id": "gate-source", "url": gate_source["url"]}},
+                         "error": None, "telemetry": TELEMETRY})]
+
+        snapshot = replay_research_events([ResearchEvent.from_json(item) for item in history])
+
+        self.assertEqual(snapshot.results["a0001"]["source"]["id"], "gate-source")
+        rejected = copy.deepcopy(history)
+        rejected[1]["body"]["allowed_response"] = ["continue_limited"]
+        with self.assertRaises(ValueError):
+            replay_research_events([ResearchEvent.from_json(item) for item in rejected])

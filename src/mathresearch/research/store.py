@@ -87,16 +87,20 @@ def _check_layout(run_dir: Path, snapshot: ResearchSnapshot, events: tuple[Resea
             _checked_children(action_dir, run_dir, files={"packet.json", "stdout.bin", "stderr.log", "result.json"}, directories=set(), immutable={"packet.json", "stdout.bin", "stderr.log", "result.json"})
             packet = action_dir / "packet.json"
             if packet.exists() and packet.read_bytes() != canonical_json_bytes(intended[action_dir.name]["packet"]): raise RunCorruptError(run_dir, "packet projection mismatch")
+            result = action_dir / "result.json"
+            committed = finished.get(action_dir.name)
+            if result.exists() and (committed is None or committed["result"] is None or result.read_bytes() != canonical_json_bytes(committed["result"])):
+                raise RunCorruptError(run_dir, "result projection mismatch")
     successful_tools = {action_id: outcome for action_id, outcome in finished.items() if outcome["outcome"] == "succeeded" and snapshot.actions[action_id]["kind"] == "tool"}
     if (run_dir / "tools").exists():
         for action_id, directory in _checked_children(run_dir / "tools", run_dir, files=set(), directories=set(successful_tools)).items():
             receipt = _checked_children(directory, run_dir, files={"receipt.json"}, directories=set(), immutable={"receipt.json"}).get("receipt.json")
-            if receipt is None or receipt.read_bytes() != canonical_json_bytes(successful_tools[action_id]["result"]): raise RunCorruptError(run_dir, "invalid tool receipt projection")
+            if receipt is not None and receipt.read_bytes() != canonical_json_bytes(successful_tools[action_id]["result"]): raise RunCorruptError(run_dir, "invalid tool receipt projection")
     source_results = {result["source"]["id"]: result["source"] for action_id, result in snapshot.results.items() if snapshot.actions[action_id]["kind"] == "tool" and snapshot.actions[action_id]["role"] == "fetch_source" and isinstance(result, dict) and isinstance(result.get("source"), dict) and isinstance(result["source"].get("id"), str)}
     if (run_dir / "sources").exists():
         for source_id, directory in _checked_children(run_dir / "sources", run_dir, files=set(), directories=set(source_results)).items():
             source = _checked_children(directory, run_dir, files={"source.json"}, directories=set(), immutable={"source.json"}).get("source.json")
-            if source is None or source.read_bytes() != canonical_json_bytes(source_results[source_id]): raise RunCorruptError(run_dir, "invalid source projection")
+            if source is not None and source.read_bytes() != canonical_json_bytes(source_results[source_id]): raise RunCorruptError(run_dir, "invalid source projection")
 
 
 def _materialize(run_dir: Path, snapshot: ResearchSnapshot, events: tuple[ResearchEvent, ...]) -> None:
