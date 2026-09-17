@@ -10,7 +10,8 @@ import unittest
 from mathresearch.contracts.research_request import ResearchRequest, build_request_payload
 from mathresearch.contracts.validation import ValidationError
 from mathresearch.research.contracts import (
-    result_schema, validate_action, validate_audit_for_draft, validate_result,
+    _validate_shape, result_schema, validate_action, validate_audit_for_draft,
+    validate_decision_details, validate_result,
 )
 
 
@@ -129,6 +130,30 @@ class WorkerResultTests(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "checks"):
             validate_audit_for_draft(audit, valid_draft())
 
+    def test_draft_tool_ids_must_be_proposed_by_the_draft(self) -> None:
+        draft = valid_draft()
+        draft["claims"][0]["tool_ids"] = ["tool-one"]  # type: ignore[index]
+        with self.assertRaisesRegex(ValidationError, r"claims\[0\].tool_ids"):
+            validate_result("branch", draft)
+
+    def test_audit_step_and_tool_ids_must_belong_to_current_draft(self) -> None:
+        draft = valid_draft()
+        draft["proof_steps"] = [{"id": "step-one", "statement": "s", "justification": "j",
+                                  "depends_on": [], "citations": []}]
+        audit = valid_audit()
+        audit["checks"][0]["checked_step_ids"] = ["absent"]  # type: ignore[index]
+        with self.assertRaisesRegex(ValidationError, r"checks\[0\].checked_step_ids"):
+            validate_audit_for_draft(audit, draft)
+        audit = valid_audit()
+        audit["challenges"][0]["tool_ids"] = ["absent"]  # type: ignore[index]
+        with self.assertRaisesRegex(ValidationError, r"challenges\[0\].tool_ids"):
+            validate_audit_for_draft(audit, valid_draft())
+
+    def test_recursive_validator_accepts_only_json_null_for_null_schema(self) -> None:
+        self.assertIsNone(_validate_shape(None, {"type": "null"}, "value"))
+        with self.assertRaisesRegex(ValidationError, "value"):
+            _validate_shape("null", {"type": "null"}, "value")
+
     def test_fixture_records_are_available_for_downstream_contract_tests(self) -> None:
         fixture = Path(__file__).parents[1] / "fixtures" / "research" / "valid_records.json"
         records = json.loads(fixture.read_text(encoding="utf-8"))
@@ -143,6 +168,32 @@ class WorkerResultTests(unittest.TestCase):
         action["payload"]["run_status"] = "complete"  # type: ignore[index]
         with self.assertRaisesRegex(ValidationError, "action.payload"):
             validate_action(action)
+
+    def test_structural_values_reject_wrong_json_types_with_validation_errors(self) -> None:
+        action = {"id": "action-one", "kind": "worker", "role": "branch", "branch": [], "round": 0,
+                  "dependencies": [], "payload": {"prompt_version": "research-v1"}}
+        with self.assertRaises(ValidationError) as raised:
+            validate_action(action)
+        self.assertEqual(raised.exception.field, "action.branch")
+        action["branch"] = None; action["round"] = []
+        with self.assertRaises(ValidationError) as raised:
+            validate_action(action)
+        self.assertEqual(raised.exception.field, "action.round")
+        details = {"selected_draft_id": None, "audit_id": None, "question_status": [], "blockers": [],
+                   "finish_status": None, "round": 0}
+        with self.assertRaises(ValidationError) as raised:
+            validate_decision_details(details)
+        self.assertEqual(raised.exception.field, "decision.details.question_status")
+
+    def test_coordinator_arrays_enforce_item_and_length_limits(self) -> None:
+        action = {"id": "action-one", "kind": "worker", "role": "branch", "branch": None, "round": 0,
+                  "dependencies": ["action-two"] * 25, "payload": {"prompt_version": "research-v1"}}
+        with self.assertRaisesRegex(ValidationError, "action.dependencies"):
+            validate_action(action)
+        details = {"selected_draft_id": None, "audit_id": None, "question_status": None,
+                   "blockers": ["x" * 4001], "finish_status": None, "round": 0}
+        with self.assertRaisesRegex(ValidationError, r"decision.details.blockers\[0\]"):
+            validate_decision_details(details)
 
 
 if __name__ == "__main__":

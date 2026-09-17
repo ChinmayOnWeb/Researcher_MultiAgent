@@ -35,3 +35,24 @@ The tests cover lossless quote/newline/Unicode intent round-trip, null-goal pres
 ## Controller decision status
 
 No `NEEDS_CONTROLLER_DECISION` was required. The specified `validate_result(role, payload)` signature has no Draft argument, so the plan's required Audit-to-Draft cross-ID validation is provided as `validate_audit_for_draft(audit, draft)`, explicitly outside generic shape validation as Section 3.2/Section 5.3 require. This leaves later router/store code able to supply the current Draft deterministically.
+
+## Round 1 review fixes
+
+Addressed every reported finding in `src/mathresearch/research/contracts.py` and added focused regressions in `tests/unit/test_research_contracts.py`.
+
+1. Draft claim `tool_ids` must now resolve to IDs in that Draft's `tool_requests`. `validate_audit_for_draft` now also requires every audit `checked_step_ids` entry to resolve to the current Draft's proof steps and every challenge `tool_ids` entry to resolve to the current Draft's tool requests.
+2. The shared recursive validator now supports `{"type": "null"}` and rejects every non-null value with `ValidationError`.
+3. `action.branch`, `action.round`, `decision.details.question_status`, `decision.details.finish_status`, and `decision.details.round` now type-check before enum membership checks. Malformed JSON collections therefore produce stable `ValidationError` fields instead of Python `TypeError`.
+4. Action dependencies are limited to 24 identifier items. Decision blockers are limited to 8 strings, each at most 4000 characters. These match the existing worker-result structural limits and normal-prose limit.
+
+### Round 1 validation evidence
+
+Targeted regressions:
+
+```powershell
+$env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_contracts.WorkerResultTests -v
+```
+
+Exit code: `0`. Result: `Ran 10 tests in 0.013s — OK`.
+
+The required focused suite was rerun after these changes; its result is recorded with the Round 1 commit.
