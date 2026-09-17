@@ -1,0 +1,5 @@
+{
+  "frame": {"task_type": "exploration", "deliverables": ["Map the supplied evidence."], "subquestions": ["What does the evidence state?"], "missing_inputs": [], "proposed_checks": [], "source_needs": []},
+  "draft": {"answer": "The supplied definition is sufficient for this scoped deduction.", "question_status": "unresolved", "claims": [{"id": "claim-one", "statement": "This is a definition.", "critical": true, "kind": "definition", "citations": [], "step_ids": [], "tool_ids": [], "depends_on": []}], "proof_steps": [], "approaches": [], "open_questions": [], "tool_requests": [], "change_log": []},
+  "audit": {"checks": [{"claim_id": "claim-one", "verdict": "supported", "reasoning": "The definition is stated explicitly.", "checked_step_ids": []}], "challenges": [{"claim_id": "claim-one", "attack": "Check its scope.", "result": "It is only a definition.", "outcome": "survives", "tool_ids": []}], "missing_evidence": [], "tool_requests": [], "recommended_action": "finish"}
+}
