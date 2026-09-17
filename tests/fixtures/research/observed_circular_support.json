@@ -1,0 +1,27 @@
+{
+  "fixture_kind": "historical_defective_behavior",
+  "historical_behavior": "defective",
+  "description": "Sanitized snapshot of circular support observed in the odd-perfect-numbers run. Agent-authored output is not an authorized source or valid citation in v3.",
+  "expected_failure": "agent_output_is_not_evidence",
+  "raw_request_context": {
+    "question": "Are there any odd perfect numbers? Explain what is known and distinguish a proof of nonexistence from the current state of knowledge.",
+    "actual_goal": "Give a concise, mathematically careful explanation for a general audience.",
+    "context": "A perfect number is a positive integer equal to the sum of its positive proper divisors.",
+    "constraints": [
+      "Do not browse, modify files, run shell tools, or execute experiments.",
+      "Do not claim an open problem is resolved."
+    ]
+  },
+  "frame_success_criterion": "State that no odd perfect number is known and that their existence remains an open problem.",
+  "investigate_claim": {
+    "id": "c1",
+    "basis": "supplied",
+    "statement": "No odd perfect number is known, and existence remains an open problem.",
+    "support": "The supplied frame identifies this established status as a success criterion."
+  },
+  "verify_verdict": {
+    "claim_id": "c1",
+    "verdict": "supported",
+    "reasoning": "Consistent with established mathematical knowledge: no odd perfect number is known, and neither existence nor nonexistence has been proved."
+  }
+}

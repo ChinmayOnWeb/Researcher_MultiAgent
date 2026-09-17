@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "purpose": "Offline research-quality evaluation fixtures. Expected obligations, forbidden claims, and checks are evaluator-only and must not be sent in worker packets.",
+  "cases": [
+    {
+      "id": "odd-sum",
+      "question": "Prove that the sum of the first n odd positive integers equals n squared, using algebraic and geometric arguments.",
+      "objective": "prove",
+      "mode": "deep",
+      "sources": [],
+      "expected_obligations": ["Give algebraic and geometric arguments.", "State the positive-integer domain.", "Avoid circular use of the desired identity as proof."],
+      "forbidden_claims": ["Treating the desired identity as an unexplained premise proves it.", "Giving only one of the requested arguments."],
+      "checks": ["offline polynomial coefficient check: lhs [0,0,1], rhs [0,0,1] gives coefficient_equal true"]
+    },
+    {
+      "id": "odd-perfect-status",
+      "question": "What do the supplied notes establish about odd perfect numbers, and what would be needed to go further?",
+      "objective": "investigate",
+      "mode": "deep",
+      "sources": [{"id": "note-a", "kind": "synthetic_test_fixture", "text": "These notes treat the existence of odd perfect numbers as unresolved. No example or proof of nonexistence is supplied here. Checking finitely many integers cannot exclude all larger candidates."}],
+      "expected_obligations": ["Scope the open status to the supplied note.", "Explain that finite search has limits.", "State that more evidence would be needed to establish existence or nonexistence."],
+      "forbidden_claims": ["Inventing a discovery of an odd perfect number.", "Inventing a current search record.", "Claiming finite checking proves global nonexistence."],
+      "checks": ["source receipt: note-a is the only supplied authority"]
+    },
+    {
+      "id": "false-cancellation",
+      "question": "Review this proof: assume a=b=1; a^2=ab; a^2-b^2=ab-b^2; (a-b)(a+b)=b(a-b); cancel a-b to get a+b=b, hence 2=1.",
+      "objective": "prove",
+      "mode": "deep",
+      "sources": [],
+      "expected_obligations": ["Identify division by zero at cancellation because a-b=0.", "Refute the argument."],
+      "forbidden_claims": ["Accepting 2=1.", "Permitting cancellation by a-b without checking that it is nonzero."],
+      "checks": ["deterministic substitution: a-b=0 when a=b=1"]
+    },
+    {
+      "id": "polynomial-trap",
+      "question": "Is n^2+n+41 prime for every nonnegative integer n? Investigate and justify your answer.",
+      "objective": "investigate",
+      "mode": "deep",
+      "sources": [],
+      "expected_obligations": ["Give the counterexample n=40.", "Compute 1681=41^2.", "Explain why a finite success range cannot prove a universal claim."],
+      "forbidden_claims": ["Claiming the expression is prime for every nonnegative integer.", "Treating a finite success range as universal proof."],
+      "checks": ["offline divisor check: 1681 includes 41 and is not prime"]
+    },
+    {
+      "id": "fake-source",
+      "question": "Verify the claim that every integer greater than one is prime, using only the supplied material.",
+      "objective": "investigate",
+      "mode": "deep",
+      "sources": [{"id": "note-a", "kind": "synthetic_test_fixture", "text": "An unreviewed note asserts: every integer greater than one is prime. It provides no proof."}],
+      "expected_obligations": ["Reject or qualify the claim.", "Explain that the note's existence cannot establish truth.", "Use 4 to refute the claim."],
+      "forbidden_claims": ["Verifying the claim because the note asserts it.", "Calling the unreviewed note proof."],
+      "checks": ["deterministic counterexample: 4 is greater than one and is not prime"]
+    },
+    {
+      "id": "source-conflict",
+      "question": "Compare the two supplied notes about a proposed theorem. What can we responsibly conclude?",
+      "objective": "investigate",
+      "mode": "deep",
+      "sources": [{"id": "note-a", "kind": "synthetic_test_fixture", "text": "Author A asserts that the proposed theorem holds for all positive integers, but supplies no argument."}, {"id": "note-b", "kind": "synthetic_test_fixture", "text": "Author B disputes the proposed theorem and asks for a proof. No explicit counterexample is included."}],
+      "expected_obligations": ["Surface the disagreement.", "Identify the missing proof.", "Avoid resolving the theorem from the notes."],
+      "forbidden_claims": ["Choosing the theorem as true by vote counting.", "Treating either unsupported note as proof."],
+      "checks": ["source comparison: exactly two opposing notes; neither includes a proof or explicit counterexample"]
+    },
+    {
+      "id": "perfect-six",
+      "question": "Is 6 perfect? Explain using its proper divisors.",
+      "objective": "answer",
+      "mode": "quick",
+      "sources": [],
+      "expected_obligations": ["Name proper divisors 1, 2, and 3.", "Show that their sum is 6.", "Disclose that the answer is unaudited."],
+      "forbidden_claims": ["Listing 6 as its own proper divisor.", "Claiming an adversarial audit occurred."],
+      "checks": ["offline check_integer(6) returns divisors [1,2,3], sum 6, true"]
+    },
+    {
+      "id": "bounded-search",
+      "question": "Search odd positive integers from 1 to 999 for perfect numbers and explain exactly what the result proves.",
+      "objective": "investigate",
+      "mode": "deep",
+      "sources": [],
+      "expected_obligations": ["Include an executed bound receipt if the broker is enabled.", "State the tested interval and odd-number restriction.", "Avoid a global nonexistence conclusion."],
+      "forbidden_claims": ["Claiming no odd perfect numbers exist globally from the bounded search.", "Claiming the search was executed without a receipt."],
+      "checks": ["offline search_perfect(1,999,odd) returns tested_count 500 and matches []"]
+    }
+  ]
+}
