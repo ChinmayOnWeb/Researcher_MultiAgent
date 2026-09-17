@@ -12,7 +12,7 @@ from typing import Any, Iterator
 
 from mathresearch.errors import RunCorruptError, RunNotFoundError, RunStoreError, RunUninitializedError
 from mathresearch.locking import acquire_run_lock
-from mathresearch.run_store import _atomic_write_new, _atomic_write_replace, _load_persisted_json, _require_existing_run_directory, _require_regular_file, _require_safe_existing_lock_target
+from mathresearch.run_store import _atomic_write_new, _atomic_write_replace, _documented_event_temporary_target, _documented_temporary_target, _load_persisted_json, _require_existing_run_directory, _require_regular_file, _require_safe_existing_lock_target, _verify_temporary_hardlink_aliases
 from mathresearch.contracts.research_request import ResearchRequest
 from .events import ResearchEvent, ResearchSnapshot, canonical_json_bytes, replay_research_events
 
@@ -28,22 +28,44 @@ def _read_events(run_dir: Path) -> tuple[ResearchEvent, ...]:
     events_dir = run_dir / "events"
     if not events_dir.exists(): raise RunUninitializedError(run_dir)
     _safe_directory(events_dir, run_dir)
-    names = sorted(path.name for path in events_dir.iterdir() if not path.name.startswith("."))
+    entries: dict[str, Path] = {}; temporary: list[tuple[Path, str]] = []
+    for path in events_dir.iterdir():
+        target = _documented_event_temporary_target(path.name)
+        if target is not None:
+            _require_regular_file(path, run_dir); temporary.append((path, target)); continue
+        if len(path.name) != 11 or not path.name.endswith(".json") or not path.name[:6].isdigit(): raise RunCorruptError(run_dir, "unexpected event artifact")
+        _require_regular_file(path, run_dir); entries[path.name] = path
+    names = sorted(entries)
     expected = [f"{number:06d}.json" for number in range(1, len(names) + 1)]
     if names != expected: raise RunCorruptError(run_dir, "event files must be contiguous canonical sequences")
     events: list[ResearchEvent] = []
     for name in names:
-        path = events_dir / name; _require_regular_file(path, run_dir)
+        path = entries[name]
         try: events.append(ResearchEvent.from_json(_load_persisted_json(path, run_dir)))
         except (ValueError, TypeError) as exc: raise RunCorruptError(run_dir, "invalid research event") from exc
+    _verify_temporary_hardlink_aliases(run_dir, entries, temporary, immutable_targets=frozenset(entries))
     return tuple(events)
+
+
+def _checked_children(directory: Path, run_dir: Path, *, files: set[str], directories: set[str], immutable: set[str] = set()) -> dict[str, Path]:
+    entries: dict[str, Path] = {}; temporary: list[tuple[Path, str]] = []
+    for path in directory.iterdir():
+        target = _documented_temporary_target(path.name, tuple(files))
+        if target is not None:
+            _require_regular_file(path, run_dir); temporary.append((path, target)); continue
+        if path.name in files:
+            _require_regular_file(path, run_dir)
+        elif path.name in directories:
+            _safe_directory(path, run_dir)
+        else: raise RunCorruptError(run_dir, f"unexpected artifact {path.name}")
+        entries[path.name] = path
+    _verify_temporary_hardlink_aliases(run_dir, entries, temporary, immutable_targets=frozenset(immutable))
+    return entries
 
 
 def _check_layout(run_dir: Path, snapshot: ResearchSnapshot, events: tuple[ResearchEvent, ...]) -> None:
     allowed = {".run.lock", "request.json", "state.json", "events", "actions", "sources", "tools", "report.md", "research-log.md"}
-    for entry in run_dir.iterdir():
-        if entry.name.startswith(".") and entry.name.endswith(".tmp"): continue
-        if entry.name not in allowed: raise RunCorruptError(run_dir, f"unexpected root entry {entry.name}")
+    root = _checked_children(run_dir, run_dir, files={".run.lock", "request.json", "state.json", "report.md", "research-log.md"}, directories={"events", "actions", "sources", "tools"}, immutable={"request.json"})
     for name in ("actions", "sources", "tools"):
         path = run_dir / name
         if path.exists(): _safe_directory(path, run_dir)
@@ -59,23 +81,22 @@ def _check_layout(run_dir: Path, snapshot: ResearchSnapshot, events: tuple[Resea
             if not capture.exists() or not capture.is_file() or hashlib.sha256(capture.read_bytes()).hexdigest() != outcome[digest_key]:
                 raise RunCorruptError(run_dir, "capture digest mismatch")
     if (run_dir / "actions").exists():
-        for action_dir in (run_dir / "actions").iterdir():
-            if action_dir.name.startswith("."): continue
+        for action_dir in _checked_children(run_dir / "actions", run_dir, files=set(), directories=set(intended)).values():
             if action_dir.name not in intended: raise RunCorruptError(run_dir, "unauthorized action directory")
             _safe_directory(action_dir, run_dir)
-            for child in action_dir.iterdir():
-                if child.name.startswith(".") and child.name.endswith(".tmp"): continue
-                if child.name not in {"packet.json", "stdout.bin", "stderr.log", "result.json"}: raise RunCorruptError(run_dir, "unexpected action artifact")
-                _require_regular_file(child, run_dir)
+            _checked_children(action_dir, run_dir, files={"packet.json", "stdout.bin", "stderr.log", "result.json"}, directories=set(), immutable={"packet.json", "result.json"})
             packet = action_dir / "packet.json"
             if packet.exists() and packet.read_bytes() != canonical_json_bytes(intended[action_dir.name]["packet"]): raise RunCorruptError(run_dir, "packet projection mismatch")
-    for dirname in ("tools", "sources"):
-        path = run_dir / dirname
-        if path.exists():
-            for child in path.iterdir():
-                if child.name.startswith("."): continue
-                _safe_directory(child, run_dir)
-                if dirname == "tools" and child.name not in finished: raise RunCorruptError(run_dir, "unauthorized tool projection")
+    successful_tools = {action_id: outcome for action_id, outcome in finished.items() if outcome["outcome"] == "succeeded" and snapshot.actions[action_id]["kind"] == "tool"}
+    if (run_dir / "tools").exists():
+        for action_id, directory in _checked_children(run_dir / "tools", run_dir, files=set(), directories=set(successful_tools)).items():
+            receipt = _checked_children(directory, run_dir, files={"receipt.json"}, directories=set(), immutable={"receipt.json"}).get("receipt.json")
+            if receipt is None or receipt.read_bytes() != canonical_json_bytes(successful_tools[action_id]["result"]): raise RunCorruptError(run_dir, "invalid tool receipt projection")
+    source_results = {result["source"]["id"]: result["source"] for action_id, result in snapshot.results.items() if snapshot.actions[action_id]["kind"] == "tool" and snapshot.actions[action_id]["role"] == "fetch_source" and isinstance(result, dict) and isinstance(result.get("source"), dict) and isinstance(result["source"].get("id"), str)}
+    if (run_dir / "sources").exists():
+        for source_id, directory in _checked_children(run_dir / "sources", run_dir, files=set(), directories=set(source_results)).items():
+            source = _checked_children(directory, run_dir, files={"source.json"}, directories=set(), immutable={"source.json"}).get("source.json")
+            if source is None or source.read_bytes() != canonical_json_bytes(source_results[source_id]): raise RunCorruptError(run_dir, "invalid source projection")
 
 
 def _materialize(run_dir: Path, snapshot: ResearchSnapshot, events: tuple[ResearchEvent, ...]) -> None:
@@ -90,6 +111,16 @@ def _materialize(run_dir: Path, snapshot: ResearchSnapshot, events: tuple[Resear
         elif item.event_type == "action_finished" and item.body["result"] is not None:
             result = run_dir / "actions" / item.body["action_id"] / "result.json"
             if not result.exists(): _atomic_write_new(result, canonical_json_bytes(item.body["result"]))
+            action = snapshot.actions[item.body["action_id"]]
+            if action["kind"] == "tool" and item.body["outcome"] == "succeeded":
+                directory = run_dir / "tools" / item.body["action_id"]; directory.mkdir(parents=True, exist_ok=True)
+                receipt = directory / "receipt.json"
+                if not receipt.exists(): _atomic_write_new(receipt, canonical_json_bytes(item.body["result"]))
+                source = item.body["result"].get("source") if isinstance(item.body["result"], dict) else None
+                if action["role"] == "fetch_source" and isinstance(source, dict) and isinstance(source.get("id"), str):
+                    source_dir = run_dir / "sources" / source["id"]; source_dir.mkdir(parents=True, exist_ok=True)
+                    source_path = source_dir / "source.json"
+                    if not source_path.exists(): _atomic_write_new(source_path, canonical_json_bytes(source))
         elif item.event_type == "research_finished":
             _atomic_write_replace(run_dir / "report.md", item.body["report_markdown"].encode("utf-8")); _atomic_write_replace(run_dir / "research-log.md", item.body["log_markdown"].encode("utf-8"))
 

@@ -59,3 +59,11 @@ Exit code: `0`. Result: `Ran 43 tests in 3.813s — OK`.
 ### Remaining review scope
 
 The action-result-to-source/receipt projection schemas, full route-table authorization, and atomic temporary hardlink alias rules require the downstream Task 6 broker schemas and the existing private temporary-alias verifier to be integrated. They are not fully addressed by this round's changes and must not be represented as complete fixes.
+
+## Fix round 1 follow-up
+
+The remaining structural store boundary is now closed without defining Task 6 semantics. `tools/<action-id>/` is legal only for a committed successful action whose recorded action kind is `tool`; it must contain exactly a regular, non-link `receipt.json` whose canonical bytes equal that action's committed result object. `sources/<source-id>/` is legal only when a successful `fetch_source` tool result structurally exposes that source ID; it must contain exactly a regular, non-link `source.json` with matching canonical bytes. Worker actions cannot authorize tool directories, and arbitrary source directories cannot become evidence.
+
+The store now uses the legacy `_verify_temporary_hardlink_aliases` routine for root, event, action, source, and tool projection directories. Every entry, including a dot-prefixed writer temporary, is classified as a documented temporary alias or rejected; aliases are accepted only when the immutable target identity and hardlink count verify.
+
+Task 3 validates the Section 6 local action structure through Task 2's `validate_action`, enforces contiguous action lifecycle/dependencies and terminal/gate legality, and deliberately defers Section 7 routing-table reason-code selection to Task 7. It does not make route policy decisions.
