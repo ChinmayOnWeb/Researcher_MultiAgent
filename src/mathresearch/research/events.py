@@ -85,8 +85,6 @@ def validate_tool_result(operation: str, value: Any, *, requested_source: Mappin
 def _gate_source_inputs(response: Any, *, gate_id: str, response_id: str,
                         fetch_sources: bool, allowed_response: tuple[str, ...]) -> tuple[SourceInput, ...]:
     """Validate only the gate fields needed to authorize added source descriptors."""
-    if not isinstance(response, Mapping) or "sources" not in response:
-        return ()
     data = require_object(response, "gate response")
     require_exact_fields(data, "gate response", {"schema_version", "record_type", "gate_id",
                          "response_id", "decision", "text", "sources"})

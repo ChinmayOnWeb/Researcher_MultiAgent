@@ -114,12 +114,19 @@ class ResearchPromptTests(unittest.TestCase):
             ("additional_user_input", [{"gate_id": "g0001", "response_id": "r0001", "text": 7}]),
             ("sources", {"source-one": {"id": "source-one", "kind": "text", "title": "x", "text": "x", "url": None, "published_at": None, "hidden": True}}),
             ("tool_results", {"check-one": {"tool_id": "check-one", "request": {}, "status": "succeeded", "result": {}, "error": None, "scope": "x", "implementation_version": "mathresearch-broker-v1", "hidden": True}}),
+            ("sources", {"source-one": {"id": "source-one", "kind": "url", "title": "x", "text": None, "url": 7, "published_at": None}}),
+            ("tool_results", {"check-one": {"tool_id": "check-one", "request": {"id": "check-one", "operation": 7, "arguments": {}}, "status": "succeeded", "result": {}, "error": None, "scope": "x", "implementation_version": "mathresearch-broker-v1"}}),
         )
         for field, value in malformed:
             with self.subTest(field=field):
                 candidate = dict(packet); candidate[field] = value
                 with self.assertRaises(ValidationError):
                     build_prompt("answer", candidate)
+
+    def test_rejects_non_mapping_synthesis_branches(self) -> None:
+        packet = build_packet(snapshot().request, snapshot(), action("synth-one", "synthesize", dependencies=["branch-a", "branch-b"]))
+        packet["inputs"] = {"branches": 7}
+        with self.assertRaises(ValidationError): build_prompt("synthesize", packet)
 
     def test_rejects_hidden_fields_in_actions_and_packets(self) -> None:
         state = snapshot()

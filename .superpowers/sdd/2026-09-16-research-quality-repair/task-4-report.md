@@ -52,3 +52,9 @@ Replay now stores supplied non-null gate text as immutable exact `{gate_id,respo
 Packet validation now recursively checks source descriptor/record shapes, ToolReceipt envelopes, supplied-input records, role inputs, and output schema before rendering. Unknown nested keys and malformed types raise `ValidationError`.
 
 Verification: `$env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_prompts tests.unit.test_research_events tests.unit.test_research_store tests.unit.test_research_contracts -v` — 42 passed.
+
+## Fix round 2
+
+Gate replay no longer bypasses validation when `sources` is omitted: every response must have the complete exact envelope before any decision or text is considered. Packet validation rejects the reproduced `branches=7`, `url=7`, and `operation=7` cases, in addition to nested unknown fields.
+
+Verification: `$env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_prompts tests.unit.test_research_events tests.unit.test_research_store tests.unit.test_research_contracts -v` — 44 passed.

@@ -107,6 +107,10 @@ def _validate_packet(role: str, packet: Mapping[str, Any]) -> dict[str, Any]:
     if role == "branch":
         if set(inputs) not in (set(), {"deliverables", "subquestions"}, {"targeted_obligations"}): raise ValidationError("packet.inputs", "must be a permitted branch input shape")
     else: require_exact_fields(inputs, "packet.inputs", expected or set())
+    if role == "synthesize":
+        branches = require_object(inputs["branches"], "packet.inputs.branches")
+        if not branches or any(branch not in {"a", "b", "c"} for branch in branches): raise ValidationError("packet.inputs.branches", "must contain named branches")
+        for branch, draft in branches.items(): require_object(draft, f"packet.inputs.branches.{branch}")
     _validate_evidence(data)
     _json_copy(data, "packet")
     return dict(data)
@@ -142,6 +146,8 @@ def _validate_evidence(packet: Mapping[str, Any]) -> None:
         if require_identifier(receipt["tool_id"], "packet.tool_result.tool_id") != tool_id: raise ValidationError("packet.tool_results", "key must match tool_id")
         request = require_object(receipt["request"], "packet.tool_result.request"); require_exact_fields(request, "packet.tool_result.request", {"id", "operation", "arguments"})
         require_identifier(request["id"], "packet.tool_result.request.id"); require_object(request["arguments"], "packet.tool_result.request.arguments")
+        operation = require_string(request["operation"], "packet.tool_result.request.operation")
+        if operation not in {"fetch_source", "check_integer", "check_polynomial", "search_perfect"}: raise ValidationError("packet.tool_result.request.operation", "is invalid")
         if receipt["status"] not in {"succeeded", "failed", "denied"}: raise ValidationError("packet.tool_result.status", "is invalid")
         require_string(receipt["scope"], "packet.tool_result.scope"); require_string(receipt["implementation_version"], "packet.tool_result.implementation_version")
 
