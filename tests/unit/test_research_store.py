@@ -8,8 +8,10 @@ from pathlib import Path
 
 from mathresearch.research.events import ResearchEvent, canonical_json_bytes
 from mathresearch.research.store import initialize_research, load_research_status, open_research_run
+from mathresearch.run_store import initialize_run, load_run_status
 from tests.unit.test_research_events import ACTION, DETAILS, PACKET, TELEMETRY
 from tests.unit.test_research_contracts import valid_request_payload
+from tests.helpers import valid_run_request_payload
 
 
 class ResearchStoreTests(unittest.TestCase):
@@ -45,3 +47,13 @@ class ResearchStoreTests(unittest.TestCase):
             (run / "state.json").unlink()
             with self.assertRaises(RuntimeError): load_research_status(run)
             self.assertFalse((run / "state.json").exists())
+
+    def test_legacy_run_status_preserves_all_committed_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); request = root / "legacy-request.json"
+            request.write_text(json.dumps(valid_run_request_payload()), encoding="utf-8")
+            run = root / "legacy-run"; initialize_run(request, run)
+            before = {path.relative_to(run): path.read_bytes() for path in run.rglob("*") if path.is_file()}
+            load_run_status(run)
+            after = {path.relative_to(run): path.read_bytes() for path in run.rglob("*") if path.is_file()}
+            self.assertEqual(after, before)

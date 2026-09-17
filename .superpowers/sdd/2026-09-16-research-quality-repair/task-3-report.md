@@ -99,3 +99,9 @@ $env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_events -v
 Exit code: `0`. Result: `Ran 7 tests in 0.007s — OK`.
 
 The required decision/intent/capture/finish/gate/final-report fault-injection matrix and a dedicated hand-authored v2 byte-preservation fixture remain missing. They are not claimed as implemented in this commit.
+
+## Fix round 3 follow-up
+
+Added a legacy-store byte-preservation regression: it hand-authors a legacy request, initializes the legacy run, snapshots every committed file's relative path and bytes, calls legacy `load_run_status`, and requires exact equality afterward. The targeted test passed with `Ran 4 tests ... OK`; the required combined suite then passed with `Ran 45 tests in 3.495s — OK`.
+
+The requested v3 fault-injection matrix remains incomplete and is not claimed as covered by this follow-up. Existing `test_run_store` continues to exercise projection publication faults, link/reparse/hardlink checks, stale temporary alias validation, and immutable evidence repair for the legacy store.
