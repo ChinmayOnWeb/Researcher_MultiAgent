@@ -88,7 +88,7 @@ def build_packet(request: ResearchRequest, snapshot: ResearchSnapshot, action: M
     if request.to_json() != snapshot.request.to_json(): raise ValidationError("request", "must match snapshot.request")
     checked_action = validate_action(action)
     if checked_action["kind"] != "worker": raise ValidationError("action.kind", "must be worker")
-    sources = {source.id: source.to_json() for source in request.sources}
+    sources = _plain_json(snapshot.source_descriptors) if snapshot.source_descriptors else {source.id: source.to_json() for source in request.sources}
     sources.update(_plain_json(snapshot.sources))
     packet = {"version": PROMPT_VERSION, "role": checked_action["role"], "action_id": checked_action["id"], "objective": request.objective, "question": request.question, "goal": request.goal, "context": request.context, "constraints": list(request.constraints), "audience": request.audience, "sources": _json_copy(sources, "sources"), "tool_results": _json_copy(snapshot.tool_results, "tool_results"), "inputs": _inputs(snapshot, checked_action), "additional_user_input": _json_copy(snapshot.additional_user_input, "additional_user_input"), "output_schema": result_schema(checked_action["role"])}
     _validate_packet(checked_action["role"], packet)

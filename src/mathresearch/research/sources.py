@@ -15,10 +15,10 @@ from urllib.parse import urljoin, urlsplit
 from typing import Any, Callable, Mapping
 
 from mathresearch.contracts.validation import ValidationError
+from mathresearch.research.implementation import BROKER_IMPLEMENTATIONS, IMPLEMENTATION_VERSION
 
-
-NORMALIZER_VERSION = "html-normalizer-v1"
-BROKER_VERSION = "mathresearch-broker-v1"
+NORMALIZER_VERSION = BROKER_IMPLEMENTATIONS[IMPLEMENTATION_VERSION]["html_normalizer"]
+BROKER_VERSION = IMPLEMENTATION_VERSION
 MAX_RESPONSE_BYTES = 1024 * 1024
 
 

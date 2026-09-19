@@ -144,7 +144,10 @@ class ResearchStoreTests(unittest.TestCase):
                 finish = self._event(4, "action_finished", {"action_id": "a0001",
                                      "outcome": "succeeded", "exit_code": 0,
                                      "stdout_sha256": stdout, "stderr_sha256": stderr,
-                                     "result": {"source": source}, "error": None,
+                                     "result": {"tool_id": "a0001", "request": action["payload"],
+                                                "status": "succeeded", "result": {"source": source},
+                                                "error": None, "scope": "authorized source fetch",
+                                                "implementation_version": "mathresearch-broker-v1"}, "error": None,
                                      "telemetry": TELEMETRY})
                 original_new = store_module._atomic_write_new
 
@@ -164,9 +167,9 @@ class ResearchStoreTests(unittest.TestCase):
                                  ["000001.json", "000002.json", "000003.json", "000004.json"])
                 recovered = load_research_status(run)
 
-                self.assertEqual(recovered.results["a0001"], {"source": source})
-                self.assertEqual(json.loads((run / "actions" / "a0001" / "result.json").read_text(encoding="utf-8")), {"source": source})
-                self.assertEqual(json.loads((run / "tools" / "a0001" / "receipt.json").read_text(encoding="utf-8")), {"source": source})
+                self.assertEqual(recovered.results["a0001"]["result"], {"source": source})
+                self.assertEqual(json.loads((run / "actions" / "a0001" / "result.json").read_text(encoding="utf-8"))["result"], {"source": source})
+                self.assertEqual(json.loads((run / "tools" / "a0001" / "receipt.json").read_text(encoding="utf-8"))["result"], {"source": source})
                 self.assertEqual(json.loads((run / "sources" / "source-one" / "source.json").read_text(encoding="utf-8")), source)
                 event_paths_after = sorted((run / "events").glob("*.json"))
                 self.assertEqual(event_paths_after, event_paths_before)

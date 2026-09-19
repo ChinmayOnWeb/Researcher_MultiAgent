@@ -7,6 +7,7 @@ import unittest
 
 from mathresearch.research.sources import (SourceFetchError, fetch_source, normalize_text,
                                            validate_https_url)
+from mathresearch.research.implementation import BROKER_IMPLEMENTATIONS, IMPLEMENTATION_VERSION
 
 
 def dns(*addresses: str):
@@ -20,6 +21,13 @@ def descriptor(url: str = "https://example.test/note"):
 
 
 class ResearchSourceTests(unittest.TestCase):
+    def test_broker_v1_manifest_pins_html_normalizer(self) -> None:
+        self.assertEqual(IMPLEMENTATION_VERSION, "mathresearch-broker-v1")
+        self.assertEqual(BROKER_IMPLEMENTATIONS[IMPLEMENTATION_VERSION]["html_normalizer"], "html-normalizer-v1")
+        normalized = normalize_text("<p>A &amp; B</p><script>hidden</script>", "text/html")
+        self.assertEqual(normalized, "A & B")
+        self.assertEqual(hashlib.sha256(normalized.encode()).hexdigest(), "dff4ec67bd72f843cab6495130699248a946fd5f50433f890d4aa3191beca761")
+
     def test_https_authorization_rejects_unsafe_url_forms(self) -> None:
         for url in ("http://example.test/x", "https://user@example.test/x",
                     "https://example.test:444/x", "https://127.0.0.1/x",

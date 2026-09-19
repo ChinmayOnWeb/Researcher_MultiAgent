@@ -96,7 +96,7 @@ def _check_layout(run_dir: Path, snapshot: ResearchSnapshot, events: tuple[Resea
         for action_id, directory in _checked_children(run_dir / "tools", run_dir, files=set(), directories=set(successful_tools)).items():
             receipt = _checked_children(directory, run_dir, files={"receipt.json"}, directories=set(), immutable={"receipt.json"}).get("receipt.json")
             if receipt is not None and receipt.read_bytes() != canonical_json_bytes(successful_tools[action_id]["result"]): raise RunCorruptError(run_dir, "invalid tool receipt projection")
-    source_results = {result["source"]["id"]: result["source"] for action_id, result in snapshot.results.items() if snapshot.actions[action_id]["kind"] == "tool" and snapshot.actions[action_id]["role"] == "fetch_source" and isinstance(result, dict) and isinstance(result.get("source"), dict) and isinstance(result["source"].get("id"), str)}
+    source_results = {result["result"]["source"]["id"]: result["result"]["source"] for action_id, result in snapshot.results.items() if snapshot.actions[action_id]["kind"] == "tool" and snapshot.actions[action_id]["role"] == "fetch_source" and isinstance(result, dict) and result.get("status") == "succeeded" and isinstance(result.get("result"), dict) and isinstance(result["result"].get("source"), dict) and isinstance(result["result"]["source"].get("id"), str)}
     if (run_dir / "sources").exists():
         for source_id, directory in _checked_children(run_dir / "sources", run_dir, files=set(), directories=set(source_results)).items():
             source = _checked_children(directory, run_dir, files={"source.json"}, directories=set(), immutable={"source.json"}).get("source.json")
@@ -120,7 +120,8 @@ def _materialize(run_dir: Path, snapshot: ResearchSnapshot, events: tuple[Resear
                 directory = run_dir / "tools" / item.body["action_id"]; directory.mkdir(parents=True, exist_ok=True)
                 receipt = directory / "receipt.json"
                 if not receipt.exists(): _atomic_write_new(receipt, canonical_json_bytes(item.body["result"]))
-                source = item.body["result"].get("source") if isinstance(item.body["result"], dict) else None
+                receipt_result = item.body["result"].get("result") if isinstance(item.body["result"], dict) else None
+                source = receipt_result.get("source") if isinstance(receipt_result, dict) else None
                 if action["role"] == "fetch_source" and isinstance(source, dict) and isinstance(source.get("id"), str):
                     source_dir = run_dir / "sources" / source["id"]; source_dir.mkdir(parents=True, exist_ok=True)
                     source_path = source_dir / "source.json"

@@ -203,9 +203,6 @@ def validate_audit_for_draft(audit: Mapping[str, Any], draft: Mapping[str, Any])
         raise ValidationError("checks", "must contain one check for every draft claim")
     if any(challenge["claim_id"] not in claim_ids for challenge in checked_audit["challenges"]):
         raise ValidationError("challenges", "must refer to draft claims")
-    critical = {claim["id"] for claim in checked_draft["claims"] if claim["critical"]}
-    if not critical <= {challenge["claim_id"] for challenge in checked_audit["challenges"]}:
-        raise ValidationError("challenges", "must challenge every critical claim")
     step_ids = {step["id"] for step in checked_draft["proof_steps"]}
     for index, check in enumerate(checked_audit["checks"]):
         if any(step_id not in step_ids for step_id in check["checked_step_ids"]):

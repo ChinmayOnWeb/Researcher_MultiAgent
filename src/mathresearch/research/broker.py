@@ -12,12 +12,12 @@ from mathresearch.adapters.base import LaunchSpec, WorkerInput, WorkerOutput
 from mathresearch.contracts.validation import (ValidationError, require_exact_fields,
     require_identifier, require_object, require_string)
 from mathresearch.research.events import canonical_json_bytes
+from mathresearch.research.implementation import IMPLEMENTATION_VERSION
 from mathresearch.research.math_checks import perform_math_check, validate_math_arguments
 from mathresearch.research.sources import validate_captured_source
 from mathresearch.worker_process import execute_worker
 
 
-IMPLEMENTATION_VERSION = "mathresearch-broker-v1"
 _OPERATIONS = {"fetch_source", "check_integer", "check_polynomial", "search_perfect"}
 
 

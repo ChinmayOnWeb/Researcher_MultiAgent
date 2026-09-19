@@ -45,6 +45,9 @@ def fetch_history(*, requested_id: str = "source-one", result_id: str = "source-
         "retrieval_receipt": {"requested_url": descriptor_url, "final_url": result_url,
             "http_status": 200, "content_type": "text/plain", "raw_sha256": "2" * 64,
             "text_sha256": source_hash, "byte_count": len(source_text.encode())}}
+    receipt = {"tool_id": "a0001", "request": action["payload"], "status": "succeeded",
+        "result": {"source": source_record}, "error": None, "scope": "authorized source fetch",
+        "implementation_version": "mathresearch-broker-v1"}
     return [
         event(1, "research_initialized", {"request": request}),
         event(2, "decision_recorded", {"decision_id": "d0001", "kind": "tool",
@@ -53,7 +56,7 @@ def fetch_history(*, requested_id: str = "source-one", result_id: str = "source-
               "packet_sha256": SHA}),
         event(4, "action_finished", {"action_id": "a0001", "outcome": "succeeded",
               "exit_code": 0, "stdout_sha256": "0" * 64, "stderr_sha256": "1" * 64,
-              "result": {"source": source_record}, "error": None,
+              "result": receipt, "error": None,
               "telemetry": TELEMETRY}),
     ]
 
@@ -94,11 +97,15 @@ class ResearchEventTests(unittest.TestCase):
             event(3, "action_intended", {"action_id": "a0001", "packet": PACKET, "packet_sha256": SHA}),
             event(4, "action_finished", {"action_id": "a0001", "outcome": "succeeded", "exit_code": 0,
                 "stdout_sha256": "0" * 64, "stderr_sha256": "1" * 64,
-                "result": {"n": 6, "proper_divisors": [1, 2, 3], "proper_divisor_sum": 6,
-                           "is_perfect": True}, "error": None, "telemetry": TELEMETRY})]
-        self.assertEqual(replay_research_events([ResearchEvent.from_json(item) for item in history]).results["a0001"]["is_perfect"], True)
+                "result": {"tool_id": "a0001", "request": action["payload"], "status": "succeeded",
+                           "result": {"n": 6, "proper_divisors": [1, 2, 3], "proper_divisor_sum": 6,
+                                      "is_perfect": True}, "error": None, "scope": "bounded integer check",
+                           "implementation_version": "mathresearch-broker-v1"}, "error": None, "telemetry": TELEMETRY})]
+        replayed = replay_research_events([ResearchEvent.from_json(item) for item in history])
+        self.assertEqual(replayed.results["a0001"]["result"]["is_perfect"], True)
+        self.assertIn("a0001", replayed.tool_results)
         corrupted = copy.deepcopy(history)
-        corrupted[-1]["body"]["result"]["is_perfect"] = False
+        corrupted[-1]["body"]["result"]["result"]["is_perfect"] = False
         with self.assertRaises(ValueError):
             replay_research_events([ResearchEvent.from_json(item) for item in corrupted])
 
@@ -107,6 +114,7 @@ class ResearchEventTests(unittest.TestCase):
         response = {"schema_version": 3, "record_type": "research_gate_response", "gate_id": "g0001", "response_id": "r0001", "decision": "supply", "text": "quoted\nUnicode: π", "sources": []}
         snapshot = replay_research_events([ResearchEvent.from_json(event(1, "research_initialized", {"request": valid_request_payload()})), ResearchEvent.from_json(gate), ResearchEvent.from_json(event(3, "gate_answered", {"gate_id": "g0001", "response_id": "r0001", "response": response}))])
         self.assertEqual(snapshot.additional_user_input, ({"gate_id": "g0001", "response_id": "r0001", "text": "quoted\nUnicode: π"},))
+        self.assertEqual(snapshot.sources["gate-text-g0001"]["text"], "quoted\nUnicode: π")
 
     def test_gate_response_rejects_mismatched_or_invalid_supply(self) -> None:
         gate = event(2, "gate_opened", {"gate_id": "g0001", "kind": "missing_inputs", "questions": ["q"], "allowed_response": ["supply"], "resume_token": "0" * 64})
@@ -174,7 +182,8 @@ class ResearchEventTests(unittest.TestCase):
 
     def test_fetch_result_must_match_an_authorized_requested_url_descriptor(self) -> None:
         snapshot = replay_research_events([ResearchEvent.from_json(item) for item in fetch_history()])
-        self.assertEqual(snapshot.results["a0001"]["source"]["id"], "source-one")
+        self.assertEqual(snapshot.results["a0001"]["result"]["source"]["id"], "source-one")
+        self.assertIn("source-one", snapshot.sources)
 
         for history in (
             fetch_history(requested_id="not-authorized", result_id="not-authorized"),
@@ -208,7 +217,8 @@ class ResearchEventTests(unittest.TestCase):
                          "packet_sha256": SHA}),
                    event(6, "action_finished", {"action_id": "a0001", "outcome": "succeeded",
                          "exit_code": 0, "stdout_sha256": "0" * 64, "stderr_sha256": "1" * 64,
-                         "result": {"source": {"id": "gate-source", "origin": "retrieved",
+                         "result": {"tool_id": "a0001", "request": action["payload"], "status": "succeeded",
+                           "result": {"source": {"id": "gate-source", "origin": "retrieved",
                              "title": "Gate source", "url": gate_source["url"], "published_at": None,
                              "captured_at": "2026-09-16T00:00:06Z", "text": "Captured gate source.",
                              "sha256": hashlib.sha256(b"Captured gate source.").hexdigest(),
@@ -216,12 +226,15 @@ class ResearchEventTests(unittest.TestCase):
                                  "final_url": gate_source["url"], "http_status": 200,
                                  "content_type": "text/plain", "raw_sha256": "2" * 64,
                                  "text_sha256": hashlib.sha256(b"Captured gate source.").hexdigest(),
-                                 "byte_count": len(b"Captured gate source.")}}},
+                                 "byte_count": len(b"Captured gate source.")}}}, "error": None,
+                           "scope": "authorized source fetch", "implementation_version": "mathresearch-broker-v1"},
                          "error": None, "telemetry": TELEMETRY})]
 
         snapshot = replay_research_events([ResearchEvent.from_json(item) for item in history])
 
-        self.assertEqual(snapshot.results["a0001"]["source"]["id"], "gate-source")
+        self.assertEqual(snapshot.results["a0001"]["result"]["source"]["id"], "gate-source")
+        self.assertIn("gate-source", snapshot.sources)
+        self.assertEqual(snapshot.source_descriptors["gate-source"]["url"], gate_source["url"])
         rejected = copy.deepcopy(history)
         rejected[1]["body"]["allowed_response"] = ["continue_limited"]
         with self.assertRaises(ValueError):

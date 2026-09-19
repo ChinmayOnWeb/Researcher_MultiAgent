@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -61,24 +61,17 @@ def _telemetry(value: Any) -> dict[str, Any]:
 
 def validate_tool_result(operation: str, value: Any, *, requested_source: Mapping[str, Any] | None = None,
                          requested_arguments: Mapping[str, Any] | None = None,
+                         tool_id: str | None = None, request: Mapping[str, Any] | None = None,
                          authorized_urls: set[str] | None = None) -> dict[str, Any]:
-    """Validate the exact broker result, including deterministic mathematical recomputation."""
-    data = require_object(value, "tool result")
-    if operation == "fetch_source":
-        require_exact_fields(data, "tool result", {"source"})
-        if requested_source is None or requested_source.get("kind") != "url":
-            raise ValidationError("tool result.source", "is not an authorized URL source")
-        from mathresearch.research.sources import validate_captured_source
-        checked = {"source": validate_captured_source(data["source"], requested=requested_source,
-                                                       authorized_urls=authorized_urls)}
-    elif operation in {"check_integer", "check_polynomial", "search_perfect"}:
-        if requested_arguments is None: raise ValidationError("tool result", "requires the intended operation arguments")
-        from mathresearch.research.math_checks import perform_math_check
-        expected = perform_math_check(operation, requested_arguments)
-        if data != expected: raise ValidationError("tool result", "does not match deterministic recomputation")
-        checked = expected
-    else:
-        raise ValidationError("tool result.operation", "is invalid")
+    """Validate the durable ToolReceipt against the completed coordinator action."""
+    if tool_id is None or request is None:
+        raise ValidationError("tool result", "requires coordinator tool ID and request")
+    if request.get("operation") != operation:
+        raise ValidationError("tool result.request", "operation differs from action")
+    from mathresearch.research.broker import validate_tool_receipt
+    checked = validate_tool_receipt(value, tool_id=tool_id, request=request,
+                                    requested_source=requested_source,
+                                    authorized_urls=authorized_urls)
     if len(canonical_json_bytes(checked)) > 65536:
         raise ValidationError("tool result", "canonical JSON must be at most 65536 bytes")
     return checked
@@ -216,6 +209,7 @@ class ResearchSnapshot:
     latest_audit_id: str | None
     final_assessment: Any
     reason: str | None
+    source_descriptors: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
     def state_json(self) -> dict[str, Any]:
         return {"schema_version": 3, "record_type": "research_state", "run_id": self.request.run_id, "initialized_at": self.initialized_at, "sequence": self.sequence, "status": self.status, "pending_action_id": self.pending_action_id, "pending_gate_id": None if self.pending_gate is None else self.pending_gate["gate_id"], "model_calls_used": self.model_calls_used, "tool_calls_used": self.tool_calls_used, "branches_started": self.branches_started, "repairs_started": self.repairs_started, "latest_draft_id": self.latest_draft_id, "latest_audit_id": self.latest_audit_id, "final_assessment": self.final_assessment, "reason": self.reason, "report_path": "report.md" if self.status in TERMINAL else None}
@@ -223,7 +217,7 @@ class ResearchSnapshot:
 
 def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ...]) -> ResearchSnapshot:
     if not events: raise ValueError("history requires initialization")
-    request: ResearchRequest | None = None; initialized_at = ""; provider_config: Mapping[str, Any] | None = None; actions: dict[str, Mapping[str, Any]] = {}; decisions: list[Mapping[str, Any]] = []; intended: dict[str, Mapping[str, Any]] = {}; results: dict[str, Any] = {}; source_descriptors: dict[str, dict[str, Any]] = {}; additional_user_input: list[Mapping[str, str]] = []; pending: str | None = None; gate: Mapping[str, Any] | None = None; terminal: Mapping[str, Any] | None = None; gate_ids: set[str] = set(); response_digests: dict[str, str] = {}; run_id = events[0].run_id; previous_time = ""
+    request: ResearchRequest | None = None; initialized_at = ""; provider_config: Mapping[str, Any] | None = None; actions: dict[str, Mapping[str, Any]] = {}; decisions: list[Mapping[str, Any]] = []; intended: dict[str, Mapping[str, Any]] = {}; results: dict[str, Any] = {}; source_descriptors: dict[str, dict[str, Any]] = {}; source_records: dict[str, Mapping[str, Any]] = {}; tool_results: dict[str, Mapping[str, Any]] = {}; additional_user_input: list[Mapping[str, str]] = []; pending: str | None = None; gate: Mapping[str, Any] | None = None; terminal: Mapping[str, Any] | None = None; gate_ids: set[str] = set(); response_digests: dict[str, str] = {}; run_id = events[0].run_id; previous_time = ""
     for expected, item in enumerate(events, 1):
         if item.sequence != expected or item.run_id != run_id or (previous_time and item.occurred_at < previous_time): raise ValueError("events must be contiguous and chronological")
         previous_time = item.occurred_at
@@ -233,6 +227,12 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
             request = ResearchRequest.from_json(item.body["request"]); initialized_at = item.occurred_at
             if request.run_id != run_id: raise ValueError("request run_id mismatch")
             source_descriptors = {source.id: source.to_json() for source in request.sources}
+            for source in request.sources:
+                if source.kind == "text":
+                    digest = hashlib.sha256(source.text.encode("utf-8")).hexdigest()
+                    source_records[source.id] = MappingProxyType({"id": source.id, "origin": "user_text", "title": source.title,
+                        "url": None, "published_at": source.published_at, "captured_at": item.occurred_at,
+                        "text": source.text, "sha256": digest, "retrieval_receipt": None})
         elif request is None: raise ValueError("initialization required")
         elif item.event_type == "provider_configured":
             config = item.body
@@ -268,11 +268,18 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
                         result = validate_tool_result(action["role"], item.body["result"],
                                                       requested_source=requested_source,
                                                       requested_arguments=action["payload"]["arguments"],
+                                                      tool_id=action_id,
+                                                      request={"id": action["payload"]["id"], "operation": action["payload"]["operation"], "arguments": action["payload"]["arguments"]},
                                                       authorized_urls={descriptor["url"] for descriptor in source_descriptors.values()
                                                                        if descriptor.get("kind") == "url"})
                 except ValidationError as exc:
                     raise ValueError("successful result does not match action") from exc
                 results[action_id] = result
+                if action["kind"] == "tool":
+                    tool_results[action_id] = result
+                    if action["role"] == "fetch_source" and result["status"] == "succeeded":
+                        captured = result["result"]["source"]
+                        source_records[captured["id"]] = MappingProxyType(dict(captured))
             pending = None
         elif item.event_type == "gate_opened":
             if gate is not None or item.body["gate_id"] in gate_ids: raise ValueError("duplicate gate")
@@ -299,8 +306,20 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
                 if source.id in source_descriptors:
                     raise ValueError("gate source ID replaces an accepted descriptor")
                 source_descriptors[source.id] = source.to_json()
+                if source.kind == "text":
+                    digest = hashlib.sha256(source.text.encode("utf-8")).hexdigest()
+                    source_records[source.id] = MappingProxyType({"id": source.id, "origin": "user_text", "title": source.title,
+                        "url": None, "published_at": source.published_at, "captured_at": item.occurred_at,
+                        "text": source.text, "sha256": digest, "retrieval_receipt": None})
             text = item.body["response"].get("text") if isinstance(item.body["response"], Mapping) else None
             if text is not None:
+                text_source_id = f"gate-text-{item.body['gate_id']}"
+                if text_source_id in source_records:
+                    raise ValueError("gate text source ID already exists")
+                digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+                source_records[text_source_id] = MappingProxyType({"id": text_source_id, "origin": "user_text",
+                    "title": f"User response {item.body['gate_id']}", "url": None, "published_at": None,
+                    "captured_at": item.occurred_at, "text": text, "sha256": digest, "retrieval_receipt": None})
                 additional_user_input.append(MappingProxyType({"gate_id": item.body["gate_id"], "response_id": item.body["response_id"], "text": text}))
             response_digests[response_key] = digest
             gate = None
@@ -310,4 +329,10 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
     if request is None: raise ValueError("initialization required")
     status = terminal["status"] if terminal else ("awaiting_human" if gate else ("running" if pending else "ready"))
     model = sum(1 for action_id in intended if actions[action_id]["kind"] == "worker"); tools = len(intended) - model
-    return ResearchSnapshot(request, initialized_at, len(events), status, provider_config, tuple(decisions), MappingProxyType(actions), MappingProxyType(results), MappingProxyType({}), MappingProxyType({}), tuple(additional_user_input), pending, gate, model, tools, sum(1 for a in actions.values() if a["branch"] in {"a", "b", "c"}), 0, None, None, None if terminal is None else terminal["assessment"], None if terminal is None else terminal["reason"])
+    completed = [(action_id, action) for action_id, action in actions.items() if action_id in results]
+    draft_ids = [action_id for action_id, action in completed if action["role"] in {"answer", "branch", "synthesize", "revise"}]
+    audit_ids = [action_id for action_id, action in completed if action["role"] == "audit"]
+    latest_draft = draft_ids[-1] if draft_ids else None; latest_audit = audit_ids[-1] if audit_ids else None
+    repair_rounds = {action["round"] for action_id, action in actions.items() if action["round"] > 0 and action_id in results}
+    repair_rounds.update(decision["details"]["round"] for decision in decisions if decision["details"]["round"] > 0)
+    return ResearchSnapshot(request, initialized_at, len(events), status, provider_config, tuple(decisions), MappingProxyType(actions), MappingProxyType(results), MappingProxyType(source_records), MappingProxyType(tool_results), tuple(additional_user_input), pending, gate, model, tools, sum(1 for a in actions.values() if a["branch"] in {"a", "b", "c"}), len(repair_rounds), latest_draft, latest_audit, None if terminal is None else terminal["assessment"], None if terminal is None else terminal["reason"], MappingProxyType(source_descriptors))

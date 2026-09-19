@@ -65,6 +65,11 @@ def check_provenance(draft: Mapping[str, Any], sources: Mapping[str, Any],
     valid_tools: set[str] = set()
     authorized_urls = {str(source.get("url")) for source in checked_sources.values()
                        if isinstance(source.get("url"), str)}
+    for source in checked_sources.values():
+        retrieval = source.get("retrieval_receipt")
+        if isinstance(retrieval, Mapping):
+            for key in ("requested_url", "final_url"):
+                if isinstance(retrieval.get(key), str): authorized_urls.add(retrieval[key])
     for tool_id, receipt in tool_results.items():
         try:
             from mathresearch.research.broker import validate_tool_receipt
@@ -105,3 +110,111 @@ def check_provenance(draft: Mapping[str, Any], sources: Mapping[str, Any],
                 if tool_id not in valid_tools:
                     issues.append(f"unknown_successful_tool:challenge:{challenge['claim_id']}:{tool_id}")
     return issues
+
+
+def assess(draft: Mapping[str, Any], sources: Mapping[str, Any],
+           tool_results: Mapping[str, Any], *, audit: Mapping[str, Any] | None = None,
+           objective: str = "investigate") -> dict[str, Any]:
+    """Derive a qualified, deterministic assessment from validated records.
+
+    Semantic entailment remains model-reviewed; this function only combines the
+    audit labels with mechanical evidence integrity and dependency status.
+    """
+    checked = _validated_draft(draft)
+    issues = check_provenance(checked, sources, tool_results, audit=audit)
+    checked_audit = None
+    if audit is not None and "invalid_audit" not in issues:
+        checked_audit = validate_audit_for_draft(audit, checked)
+    math_succeeded = False
+    if isinstance(tool_results, Mapping):
+        for tool_id, receipt in tool_results.items():
+            try:
+                from mathresearch.research.broker import validate_tool_receipt
+                if isinstance(receipt, Mapping):
+                    verified = validate_tool_receipt(receipt, tool_id=tool_id,
+                                                     request=receipt.get("request"))
+                    math_succeeded |= verified["status"] == "succeeded" and verified["request"]["operation"] != "fetch_source"
+            except (ValidationError, TypeError, KeyError, AttributeError):
+                continue
+    computation = "performed" if math_succeeded else "not_performed"
+    findings: list[dict[str, Any]] = []
+    if issues:
+        findings = [{"claim_id": claim["id"], "status": "unverified",
+                     "reasons": [issue for issue in issues if issue.endswith(claim["id"]) or f":{claim['id']}:" in issue] or ["invalid_evidence_reference"]}
+                    for claim in checked["claims"]]
+        return {"answer_status": "unverified", "provenance_status": "invalid",
+                "semantic_status": "issues_found" if audit is not None else "not_audited",
+                "computation_status": computation, "formal_status": "not_performed",
+                "claim_findings": findings, "unresolved": list(dict.fromkeys(issues))}
+    checks = {} if checked_audit is None else {item["claim_id"]: item for item in checked_audit["checks"]}
+    challenges: dict[str, list[dict[str, Any]]] = {}
+    if checked_audit is not None:
+        for item in checked_audit["challenges"]:
+            challenges.setdefault(item["claim_id"], []).append(item)
+    steps = {item["id"]: item for item in checked["proof_steps"]}
+    claim_by_id = {item["id"]: item for item in checked["claims"]}
+    memo: dict[str, str] = {}
+
+    def status_for(claim_id: str, visiting: set[str] | None = None) -> str:
+        if claim_id in memo: return memo[claim_id]
+        claim = claim_by_id[claim_id]
+        if checked_audit is None: result = "unverified"
+        else:
+            check = checks[claim_id]
+            related = challenges.get(claim_id, [])
+            contradicted = check["verdict"] == "contradicted" or any(c["outcome"] == "fails" and c["tool_ids"] for c in related)
+            if contradicted: result = "contradicted"
+            elif not claim["critical"]: result = "model_reviewed_derivation" if check["verdict"] == "supported" else "unverified"
+            elif claim["kind"] in {"model_knowledge", "conjecture"}: result = "unverified"
+            elif check["verdict"] == "conditional" or claim["kind"] == "assumption": result = "conditional"
+            elif check["verdict"] != "supported": result = "unverified"
+            elif claim["kind"] == "source_assertion": result = "source_supported"
+            elif claim["kind"] == "deduction":
+                result = "model_reviewed_derivation"
+                for step_id in claim["step_ids"]:
+                    step = steps[step_id]
+                    for dep in step["depends_on"]:
+                        if dep in claim_by_id and status_for(dep, visiting) in {"conditional", "unverified", "contradicted"}:
+                            result = "conditional" if status_for(dep, visiting) == "conditional" else "unverified"
+                for dep in claim["depends_on"]:
+                    dep_status = status_for(dep, visiting)
+                    if dep_status == "contradicted": result = "contradicted"
+                    elif dep_status in {"conditional", "unverified"} and result != "contradicted": result = dep_status
+            else: result = "model_reviewed_derivation"
+        memo[claim_id] = result
+        return result
+
+    for claim in checked["claims"]:
+        reasons: list[str] = []
+        if checked_audit is None: reasons.append("not_audited")
+        else:
+            check = checks[claim["id"]]
+            if check["verdict"] != "supported": reasons.append(f"audit_{check['verdict']}")
+            if any(ch["outcome"] == "not_tested" for ch in challenges.get(claim["id"], [])): reasons.append("challenge_not_tested")
+            if any(ch["outcome"] == "fails" for ch in challenges.get(claim["id"], [])): reasons.append("counterexample_challenge_failed")
+            for dep in claim["depends_on"]:
+                if status_for(dep) in {"conditional", "unverified", "contradicted"}: reasons.append(f"dependency_{dep}_{status_for(dep)}")
+        findings.append({"claim_id": claim["id"], "status": status_for(claim["id"]), "reasons": reasons})
+    critical_statuses = [memo[c["id"]] for c in checked["claims"] if c["critical"]]
+    unresolved: list[str] = []
+    if isinstance(tool_results, Mapping):
+        for tool_id, receipt in tool_results.items():
+            if isinstance(receipt, Mapping) and receipt.get("status") in {"failed", "denied"}:
+                unresolved.append(f"tool_{tool_id}_{receipt['status']}")
+    if checked_audit is None: unresolved.append("not_audited")
+    else:
+        unresolved.extend(checked_audit["missing_evidence"])
+        challenged = {challenge["claim_id"] for challenge in checked_audit["challenges"]}
+        if any(claim["critical"] and claim["id"] not in challenged for claim in checked["claims"]): unresolved.append("critical_claim_missing_challenge")
+        covered = {step for check in checked_audit["checks"] for step in check["checked_step_ids"]}
+        if objective == "prove" and any(claim["critical"] and claim["kind"] == "deduction" and not set(claim["step_ids"]) <= covered for claim in checked["claims"]): unresolved.append("critical_proof_steps_not_covered")
+    if "contradicted" in critical_statuses: answer_status = "refuted"
+    elif checked_audit is None: answer_status = "unverified"
+    elif unresolved or "unverified" in critical_statuses: answer_status = "inconclusive"
+    elif "conditional" in critical_statuses: answer_status = "conditional"
+    else: answer_status = "supported_within_scope"
+    semantic = "not_audited" if checked_audit is None else ("issues_found" if unresolved or answer_status in {"inconclusive", "refuted"} or any(item["status"] in {"unverified", "contradicted"} for item in findings) else "model_reviewed")
+    return {"answer_status": answer_status, "provenance_status": "valid",
+            "semantic_status": semantic, "computation_status": computation,
+            "formal_status": "not_performed", "claim_findings": findings,
+            "unresolved": list(dict.fromkeys(unresolved))}
