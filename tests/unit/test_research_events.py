@@ -62,6 +62,20 @@ def quick_complete() -> list[dict[str, object]]:
 
 
 class ResearchEventTests(unittest.TestCase):
+    def test_provider_configuration_is_persisted_and_matches_request(self) -> None:
+        config = {"executable": "C:/tools/codex.exe", "version": "codex 0.154.0",
+                  "model_requested": "gpt-test", "effort_requested": "high",
+                  "control_argv": ["--strict-config", "-c", 'model_reasoning_effort="high"'],
+                  "prompt_version": "research-v1"}
+        state = replay_research_events([ResearchEvent.from_json(event(1, "research_initialized", {"request": valid_request_payload()})),
+                                        ResearchEvent.from_json(event(2, "provider_configured", config))])
+        self.assertEqual(state.provider_config, config)
+        for changed in ({"effort_requested": "medium"}, {"model_requested": "other"}):
+            invalid = config | changed
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                replay_research_events([ResearchEvent.from_json(event(1, "research_initialized", {"request": valid_request_payload()})),
+                                        ResearchEvent.from_json(event(2, "provider_configured", invalid))])
+
     def test_supplied_gate_text_is_immutable_snapshot_input(self) -> None:
         gate = event(2, "gate_opened", {"gate_id": "g0001", "kind": "missing_inputs", "questions": ["q"], "allowed_response": ["supply"], "resume_token": "0" * 64})
         response = {"schema_version": 3, "record_type": "research_gate_response", "gate_id": "g0001", "response_id": "r0001", "decision": "supply", "text": "quoted\nUnicode: π", "sources": []}

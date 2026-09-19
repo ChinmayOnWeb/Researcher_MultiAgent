@@ -147,7 +147,11 @@ def _validate_body(kind: str, payload: Any) -> dict[str, Any]:
     if kind == "provider_configured":
         keys = {"executable", "version", "model_requested", "effort_requested", "control_argv", "prompt_version"}; require_exact_fields(data, kind, keys)
         if not isinstance(data["control_argv"], list): raise ValidationError("control_argv", "must be an array")
-        return {key: require_string(data[key], f"{kind}.{key}") for key in keys if key != "control_argv"} | {"control_argv": [require_string(x, "control_argv[]") for x in data["control_argv"]]}
+        checked = {key: require_string(data[key], f"{kind}.{key}") for key in keys if key != "control_argv"} | {"control_argv": [require_string(x, "control_argv[]") for x in data["control_argv"]]}
+        if not checked["executable"] or not checked["version"]: raise ValidationError(kind, "executable and version must be nonempty")
+        if checked["effort_requested"] not in {"medium", "high"}: raise ValidationError("effort_requested", "must be medium or high")
+        if checked["prompt_version"] != "research-v1": raise ValidationError("prompt_version", "must equal research-v1")
+        return checked
     if kind == "decision_recorded":
         require_exact_fields(data, kind, {"decision_id", "kind", "reason_code", "action", "details"})
         decision_kind = require_string(data["kind"], "decision.kind")
@@ -217,7 +221,7 @@ class ResearchSnapshot:
 
 def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ...]) -> ResearchSnapshot:
     if not events: raise ValueError("history requires initialization")
-    request: ResearchRequest | None = None; initialized_at = ""; actions: dict[str, Mapping[str, Any]] = {}; decisions: list[Mapping[str, Any]] = []; intended: dict[str, Mapping[str, Any]] = {}; results: dict[str, Any] = {}; source_descriptors: dict[str, dict[str, Any]] = {}; additional_user_input: list[Mapping[str, str]] = []; pending: str | None = None; gate: Mapping[str, Any] | None = None; terminal: Mapping[str, Any] | None = None; gate_ids: set[str] = set(); response_digests: dict[str, str] = {}; run_id = events[0].run_id; previous_time = ""
+    request: ResearchRequest | None = None; initialized_at = ""; provider_config: Mapping[str, Any] | None = None; actions: dict[str, Mapping[str, Any]] = {}; decisions: list[Mapping[str, Any]] = []; intended: dict[str, Mapping[str, Any]] = {}; results: dict[str, Any] = {}; source_descriptors: dict[str, dict[str, Any]] = {}; additional_user_input: list[Mapping[str, str]] = []; pending: str | None = None; gate: Mapping[str, Any] | None = None; terminal: Mapping[str, Any] | None = None; gate_ids: set[str] = set(); response_digests: dict[str, str] = {}; run_id = events[0].run_id; previous_time = ""
     for expected, item in enumerate(events, 1):
         if item.sequence != expected or item.run_id != run_id or (previous_time and item.occurred_at < previous_time): raise ValueError("events must be contiguous and chronological")
         previous_time = item.occurred_at
@@ -228,6 +232,12 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
             if request.run_id != run_id: raise ValueError("request run_id mismatch")
             source_descriptors = {source.id: source.to_json() for source in request.sources}
         elif request is None: raise ValueError("initialization required")
+        elif item.event_type == "provider_configured":
+            config = item.body
+            if expected != 2 or provider_config is not None: raise ValueError("provider configuration must occur once directly after initialization")
+            if config["model_requested"] != request.provider["model"] or config["effort_requested"] != request.provider["reasoning_effort"]:
+                raise ValueError("provider configuration differs from immutable request")
+            provider_config = config
         elif item.event_type == "decision_recorded":
             action = item.body["action"]
             if item.body["kind"] == "noop": raise ValueError("noop decisions are not persisted")
@@ -295,4 +305,4 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
     if request is None: raise ValueError("initialization required")
     status = terminal["status"] if terminal else ("awaiting_human" if gate else ("running" if pending else "ready"))
     model = sum(1 for action_id in intended if actions[action_id]["kind"] == "worker"); tools = len(intended) - model
-    return ResearchSnapshot(request, initialized_at, len(events), status, None, tuple(decisions), MappingProxyType(actions), MappingProxyType(results), MappingProxyType({}), MappingProxyType({}), tuple(additional_user_input), pending, gate, model, tools, sum(1 for a in actions.values() if a["branch"] in {"a", "b", "c"}), 0, None, None, None if terminal is None else terminal["assessment"], None if terminal is None else terminal["reason"])
+    return ResearchSnapshot(request, initialized_at, len(events), status, provider_config, tuple(decisions), MappingProxyType(actions), MappingProxyType(results), MappingProxyType({}), MappingProxyType({}), tuple(additional_user_input), pending, gate, model, tools, sum(1 for a in actions.values() if a["branch"] in {"a", "b", "c"}), 0, None, None, None if terminal is None else terminal["assessment"], None if terminal is None else terminal["reason"])

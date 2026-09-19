@@ -29,9 +29,13 @@ class CodexAdapter:
     }
     _DISABLED_FEATURES = ("shell_tool", "browser_use", "computer_use", "apps")
 
-    def __init__(self, executable: Path, model: str | None = None) -> None:
+    def __init__(self, executable: Path, model: str | None = None, *, reasoning_effort: str | None = None) -> None:
+        if reasoning_effort not in {None, "medium", "high"}:
+            raise ValueError("reasoning_effort must be medium, high, or None")
         self.executable = Path(executable)
         self.model = model
+        self.reasoning_effort = reasoning_effort
+        self.executable_version: str | None = None
         self._preflight_done = False
 
     def preflight(self) -> None:
@@ -43,6 +47,10 @@ class CodexAdapter:
         """
         if self._preflight_done:
             return
+        version = self._run_preflight((str(self.executable), "--version"))
+        self.executable_version = (version.stdout or version.stderr).strip()
+        if not self.executable_version:
+            raise ValueError("Codex --version returned no version text")
         inventory = self._run_preflight(
             (str(self.executable), *self._disable_arguments(), "features", "list")
         )
@@ -102,11 +110,24 @@ class CodexAdapter:
             arguments.extend(("--disable", feature))
         return tuple(arguments)
 
-    @classmethod
-    def _control_arguments(cls) -> tuple[str, ...]:
-        arguments = ["--strict-config", *cls._disable_arguments()]
+    def _control_arguments(self) -> tuple[str, ...]:
+        arguments = ["--strict-config", *self._disable_arguments()]
         arguments.extend(("--ask-for-approval", "never", "--sandbox", "read-only"))
+        if self.reasoning_effort is not None:
+            arguments.extend(("-c", f'model_reasoning_effort="{self.reasoning_effort}"'))
         return tuple(arguments)
+
+    def configuration_receipt(self) -> dict[str, Any]:
+        """Return requested settings and stable argv controls after preflight."""
+        if not self._preflight_done or self.executable_version is None:
+            raise ValueError("Codex preflight must complete before configuration is recorded")
+        controls = [*self._control_arguments(), "exec", "--skip-git-repo-check", "--ephemeral",
+                    "--ignore-user-config", "--ignore-rules"]
+        if self.model is not None:
+            controls.extend(("--model", self.model))
+        return {"executable": str(self.executable), "version": self.executable_version,
+                "model_requested": self.model or "", "effort_requested": self.reasoning_effort or "",
+                "control_argv": controls, "prompt_version": "research-v1"}
 
     def prepare(self, task: WorkerInput, scratch: Path) -> LaunchSpec:
         root = Path(os.path.abspath(scratch))

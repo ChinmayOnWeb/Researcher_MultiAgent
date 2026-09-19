@@ -40,6 +40,21 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertEqual(persisted_schema, schema)
         self.assertIn("items", persisted_schema["properties"]["claims"])
 
+    def test_reasoning_effort_is_one_literal_config_argument_before_exec(self) -> None:
+        for effort in ("high", "medium"):
+            with self.subTest(effort=effort):
+                scratch = self.scratch / effort
+                scratch.mkdir()
+                spec = CodexAdapter(Path("codex"), model="gpt-test", reasoning_effort=effort).prepare(
+                    WorkerInput("research", "prompt", _schema("investigate")), scratch)
+                index = spec.argv.index("-c")
+                self.assertEqual(spec.argv[index + 1], f'model_reasoning_effort="{effort}"')
+                self.assertLess(index, spec.argv.index("exec"))
+
+    def test_reasoning_effort_rejects_unsupported_value(self) -> None:
+        with self.assertRaisesRegex(ValueError, "reasoning_effort"):
+            CodexAdapter(Path("codex"), reasoning_effort="none")
+
     @unittest.skipUnless(shutil.which("codex"), "requires the locally installed Codex CLI")
     def test_preflight_accepts_the_installed_disabled_tool_inventory(self) -> None:
         """Removing a required native disable switch must reject the provider before a worker starts."""
