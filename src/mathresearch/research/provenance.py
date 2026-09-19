@@ -164,6 +164,7 @@ def assess(draft: Mapping[str, Any], sources: Mapping[str, Any],
             related = challenges.get(claim_id, [])
             contradicted = check["verdict"] == "contradicted" or any(c["outcome"] == "fails" and c["tool_ids"] for c in related)
             if contradicted: result = "contradicted"
+            elif claim["critical"] and any(c["outcome"] == "not_tested" for c in related): result = "unverified"
             elif not claim["critical"]: result = "model_reviewed_derivation" if check["verdict"] == "supported" else "unverified"
             elif claim["kind"] in {"model_knowledge", "conjecture"}: result = "unverified"
             elif check["verdict"] == "conditional" or claim["kind"] == "assumption": result = "conditional"
@@ -206,6 +207,7 @@ def assess(draft: Mapping[str, Any], sources: Mapping[str, Any],
         unresolved.extend(checked_audit["missing_evidence"])
         challenged = {challenge["claim_id"] for challenge in checked_audit["challenges"]}
         if any(claim["critical"] and claim["id"] not in challenged for claim in checked["claims"]): unresolved.append("critical_claim_missing_challenge")
+        if any(claim["critical"] and any(challenge["claim_id"] == claim["id"] and challenge["outcome"] == "not_tested" for challenge in checked_audit["challenges"]) for claim in checked["claims"]): unresolved.append("critical_challenge_not_tested")
         covered = {step for check in checked_audit["checks"] for step in check["checked_step_ids"]}
         if objective == "prove" and any(claim["critical"] and claim["kind"] == "deduction" and not set(claim["step_ids"]) <= covered for claim in checked["claims"]): unresolved.append("critical_proof_steps_not_covered")
     if "contradicted" in critical_statuses: answer_status = "refuted"

@@ -210,6 +210,9 @@ class ResearchSnapshot:
     final_assessment: Any
     reason: str | None
     source_descriptors: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    outcomes: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    action_telemetry: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    finished_at: str | None = None
 
     def state_json(self) -> dict[str, Any]:
         return {"schema_version": 3, "record_type": "research_state", "run_id": self.request.run_id, "initialized_at": self.initialized_at, "sequence": self.sequence, "status": self.status, "pending_action_id": self.pending_action_id, "pending_gate_id": None if self.pending_gate is None else self.pending_gate["gate_id"], "model_calls_used": self.model_calls_used, "tool_calls_used": self.tool_calls_used, "branches_started": self.branches_started, "repairs_started": self.repairs_started, "latest_draft_id": self.latest_draft_id, "latest_audit_id": self.latest_audit_id, "final_assessment": self.final_assessment, "reason": self.reason, "report_path": "report.md" if self.status in TERMINAL else None}
@@ -217,7 +220,7 @@ class ResearchSnapshot:
 
 def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ...]) -> ResearchSnapshot:
     if not events: raise ValueError("history requires initialization")
-    request: ResearchRequest | None = None; initialized_at = ""; provider_config: Mapping[str, Any] | None = None; actions: dict[str, Mapping[str, Any]] = {}; decisions: list[Mapping[str, Any]] = []; intended: dict[str, Mapping[str, Any]] = {}; results: dict[str, Any] = {}; source_descriptors: dict[str, dict[str, Any]] = {}; source_records: dict[str, Mapping[str, Any]] = {}; tool_results: dict[str, Mapping[str, Any]] = {}; additional_user_input: list[Mapping[str, str]] = []; pending: str | None = None; gate: Mapping[str, Any] | None = None; terminal: Mapping[str, Any] | None = None; gate_ids: set[str] = set(); response_digests: dict[str, str] = {}; run_id = events[0].run_id; previous_time = ""
+    request: ResearchRequest | None = None; initialized_at = ""; provider_config: Mapping[str, Any] | None = None; actions: dict[str, Mapping[str, Any]] = {}; decisions: list[Mapping[str, Any]] = []; intended: dict[str, Mapping[str, Any]] = {}; results: dict[str, Any] = {}; source_descriptors: dict[str, dict[str, Any]] = {}; source_records: dict[str, Mapping[str, Any]] = {}; tool_results: dict[str, Mapping[str, Any]] = {}; outcomes: dict[str, Mapping[str, Any]] = {}; action_telemetry: dict[str, Mapping[str, Any]] = {}; additional_user_input: list[Mapping[str, str]] = []; pending: str | None = None; gate: Mapping[str, Any] | None = None; terminal: Mapping[str, Any] | None = None; finished_at: str | None = None; gate_ids: set[str] = set(); response_digests: dict[str, str] = {}; run_id = events[0].run_id; previous_time = ""
     for expected, item in enumerate(events, 1):
         if item.sequence != expected or item.run_id != run_id or (previous_time and item.occurred_at < previous_time): raise ValueError("events must be contiguous and chronological")
         previous_time = item.occurred_at
@@ -258,6 +261,8 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
             action_id = item.body["action_id"]
             if pending != action_id or action_id not in intended: raise ValueError("finish without intent or wrong action")
             action = actions[action_id]
+            outcomes[action_id] = MappingProxyType({"outcome": item.body["outcome"], "exit_code": item.body["exit_code"], "error": item.body["error"]})
+            action_telemetry[action_id] = MappingProxyType(dict(item.body["telemetry"]))
             if item.body["outcome"] == "succeeded":
                 try:
                     if action["kind"] == "worker":
@@ -326,6 +331,7 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
         elif item.event_type == "research_finished":
             if pending is not None or gate is not None: raise ValueError("finish while action or gate pending")
             terminal = item.body
+            finished_at = item.occurred_at
     if request is None: raise ValueError("initialization required")
     status = terminal["status"] if terminal else ("awaiting_human" if gate else ("running" if pending else "ready"))
     model = sum(1 for action_id in intended if actions[action_id]["kind"] == "worker"); tools = len(intended) - model
@@ -335,4 +341,4 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
     latest_draft = draft_ids[-1] if draft_ids else None; latest_audit = audit_ids[-1] if audit_ids else None
     repair_rounds = {action["round"] for action_id, action in actions.items() if action["round"] > 0 and action_id in results}
     repair_rounds.update(decision["details"]["round"] for decision in decisions if decision["details"]["round"] > 0)
-    return ResearchSnapshot(request, initialized_at, len(events), status, provider_config, tuple(decisions), MappingProxyType(actions), MappingProxyType(results), MappingProxyType(source_records), MappingProxyType(tool_results), tuple(additional_user_input), pending, gate, model, tools, sum(1 for a in actions.values() if a["branch"] in {"a", "b", "c"}), len(repair_rounds), latest_draft, latest_audit, None if terminal is None else terminal["assessment"], None if terminal is None else terminal["reason"], MappingProxyType(source_descriptors))
+    return ResearchSnapshot(request, initialized_at, len(events), status, provider_config, tuple(decisions), MappingProxyType(actions), MappingProxyType(results), MappingProxyType(source_records), MappingProxyType(tool_results), tuple(additional_user_input), pending, gate, model, tools, sum(1 for a in actions.values() if a["branch"] in {"a", "b", "c"}), len(repair_rounds), latest_draft, latest_audit, None if terminal is None else terminal["assessment"], None if terminal is None else terminal["reason"], MappingProxyType(source_descriptors), MappingProxyType(outcomes), MappingProxyType(action_telemetry), finished_at)
