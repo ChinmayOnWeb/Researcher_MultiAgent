@@ -59,27 +59,29 @@ def _telemetry(value: Any) -> dict[str, Any]:
     return checked
 
 
-def validate_tool_result(operation: str, value: Any, *, requested_source: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """Accept only the currently durable tool shape; Task 6 owns semantics."""
+def validate_tool_result(operation: str, value: Any, *, requested_source: Mapping[str, Any] | None = None,
+                         requested_arguments: Mapping[str, Any] | None = None,
+                         authorized_urls: set[str] | None = None) -> dict[str, Any]:
+    """Validate the exact broker result, including deterministic mathematical recomputation."""
     data = require_object(value, "tool result")
-    if operation != "fetch_source":
-        raise ValidationError("tool result", "operation result schema is not available before Task 6")
-    require_exact_fields(data, "tool result", {"source"})
-    source = require_object(data["source"], "tool result.source")
-    if "id" not in source:
-        raise ValidationError("tool result.source", "missing required field 'id'")
-    source_id = require_identifier(source["id"], "tool result.source.id")
-    if requested_source is None or requested_source.get("kind") != "url":
-        raise ValidationError("tool result.source.id", "is not an authorized URL source")
-    if source_id != requested_source["id"]:
-        raise ValidationError("tool result.source.id", "must match the requested source descriptor")
-    source_url = require_string(source.get("url"), "tool result.source.url")
-    if source_url != requested_source["url"]:
-        raise ValidationError("tool result.source.url", "must match the requested source descriptor")
-    checked = {key: value for key, value in source.items()}
-    if len(canonical_json_bytes({"source": checked})) > 65536:
+    if operation == "fetch_source":
+        require_exact_fields(data, "tool result", {"source"})
+        if requested_source is None or requested_source.get("kind") != "url":
+            raise ValidationError("tool result.source", "is not an authorized URL source")
+        from mathresearch.research.sources import validate_captured_source
+        checked = {"source": validate_captured_source(data["source"], requested=requested_source,
+                                                       authorized_urls=authorized_urls)}
+    elif operation in {"check_integer", "check_polynomial", "search_perfect"}:
+        if requested_arguments is None: raise ValidationError("tool result", "requires the intended operation arguments")
+        from mathresearch.research.math_checks import perform_math_check
+        expected = perform_math_check(operation, requested_arguments)
+        if data != expected: raise ValidationError("tool result", "does not match deterministic recomputation")
+        checked = expected
+    else:
+        raise ValidationError("tool result.operation", "is invalid")
+    if len(canonical_json_bytes(checked)) > 65536:
         raise ValidationError("tool result", "canonical JSON must be at most 65536 bytes")
-    return {"source": checked}
+    return checked
 
 
 def _gate_source_inputs(response: Any, *, gate_id: str, response_id: str,
@@ -264,7 +266,10 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
                         requested_id = action["payload"]["arguments"].get("source_id")
                         requested_source = source_descriptors.get(requested_id) if isinstance(requested_id, str) else None
                         result = validate_tool_result(action["role"], item.body["result"],
-                                                      requested_source=requested_source)
+                                                      requested_source=requested_source,
+                                                      requested_arguments=action["payload"]["arguments"],
+                                                      authorized_urls={descriptor["url"] for descriptor in source_descriptors.values()
+                                                                       if descriptor.get("kind") == "url"})
                 except ValidationError as exc:
                     raise ValueError("successful result does not match action") from exc
                 results[action_id] = result

@@ -117,14 +117,29 @@ def _validate_packet(role: str, packet: Mapping[str, Any]) -> dict[str, Any]:
         for branch, draft in branches.items():
             try: validate_result("branch", require_object(draft, f"packet.inputs.branches.{branch}"))
             except ValidationError as exc: raise ValidationError(f"packet.inputs.branches.{branch}", "must be a valid Draft") from exc
+            try:
+                from mathresearch.research.provenance import check_provenance
+                issues = check_provenance(draft, data["sources"], data["tool_results"])
+                if issues: raise ValidationError(f"packet.inputs.branches.{branch}", "contains invalid evidence references")
+            except (ValidationError, TypeError, KeyError) as exc:
+                raise ValidationError(f"packet.inputs.branches.{branch}", "contains invalid evidence references") from exc
     if role in {"audit", "revise"}:
         try: _validate_any_draft(require_object(inputs["draft"], "packet.inputs.draft"))
         except ValidationError as exc: raise ValidationError("packet.inputs.draft", "must be a valid Draft") from exc
+        try:
+            from mathresearch.research.provenance import check_provenance
+            issues = check_provenance(inputs["draft"], data["sources"], data["tool_results"])
+            if issues: raise ValidationError("packet.inputs.draft", "contains invalid evidence references")
+        except (ValidationError, TypeError, KeyError) as exc:
+            raise ValidationError("packet.inputs.draft", "contains invalid evidence references") from exc
     if role == "revise":
         try:
             draft_for_crosscheck = _json_copy(inputs["draft"], "packet.inputs.draft")
             draft_for_crosscheck["change_log"] = []
-            validate_audit_for_draft(require_object(inputs["audit"], "packet.inputs.audit"), draft_for_crosscheck)
+            audit = validate_audit_for_draft(require_object(inputs["audit"], "packet.inputs.audit"), draft_for_crosscheck)
+            from mathresearch.research.provenance import check_provenance
+            issues = check_provenance(draft_for_crosscheck, data["sources"], data["tool_results"], audit=audit)
+            if issues: raise ValidationError("packet.inputs.audit", "contains uncommitted or invalid receipt references")
         except ValidationError as exc: raise ValidationError("packet.inputs.audit", "must be a valid Audit for the supplied Draft") from exc
     _validate_evidence(data)
     _json_copy(data, "packet")
@@ -150,7 +165,7 @@ def _validate_evidence(packet: Mapping[str, Any]) -> None:
         else:
             require_exact_fields(source_data, f"packet.sources.{source_id}", {"id", "origin", "title", "url", "published_at", "captured_at", "text", "sha256", "retrieval_receipt"})
             if require_identifier(source_data["id"], "packet.source.id") != source_id: raise ValidationError("packet.sources", "key must match source id")
-            if source_data["origin"] not in {"user_context", "user_text", "retrieved"}: raise ValidationError("packet.source.origin", "is invalid")
+            if not isinstance(source_data["origin"], str) or source_data["origin"] not in {"user_context", "user_text", "retrieved"}: raise ValidationError("packet.source.origin", "is invalid")
             _bounded_string(source_data["title"], "packet.source.title", 4000)
             _utc_or_none(source_data["published_at"], "packet.source.published_at", nullable=True)
             _utc_or_none(source_data["captured_at"], "packet.source.captured_at")
@@ -174,6 +189,13 @@ def _validate_evidence(packet: Mapping[str, Any]) -> None:
         text = require_string(item["text"], f"packet.additional_user_input[{index}].text")
         if len(text) > 16000: raise ValidationError("packet.additional_user_input", "text must be at most 16000 characters")
     receipts = require_object(packet["tool_results"], "packet.tool_results")
+    authorized_urls = set()
+    for source in sources.values():
+        if isinstance(source, Mapping):
+            if isinstance(source.get("url"), str): authorized_urls.add(source["url"])
+            retrieval = source.get("retrieval_receipt")
+            if isinstance(retrieval, Mapping) and isinstance(retrieval.get("requested_url"), str):
+                authorized_urls.add(retrieval["requested_url"])
     for tool_id, receipt in receipts.items():
         require_identifier(tool_id, "packet.tool_results key"); receipt = require_object(receipt, f"packet.tool_results.{tool_id}")
         require_exact_fields(receipt, f"packet.tool_results.{tool_id}", {"tool_id", "request", "status", "result", "error", "scope", "implementation_version"})
@@ -184,7 +206,7 @@ def _validate_evidence(packet: Mapping[str, Any]) -> None:
         if operation not in {"fetch_source", "check_integer", "check_polynomial", "search_perfect"}: raise ValidationError("packet.tool_result.request.operation", "is invalid")
         _validate_tool_arguments(operation, arguments)
         status = receipt["status"]
-        if status not in {"succeeded", "failed", "denied"}: raise ValidationError("packet.tool_result.status", "is invalid")
+        if not isinstance(status, str) or status not in {"succeeded", "failed", "denied"}: raise ValidationError("packet.tool_result.status", "is invalid")
         _bounded_string(receipt["scope"], "packet.tool_result.scope", 4000)
         if receipt["implementation_version"] != "mathresearch-broker-v1": raise ValidationError("packet.tool_result.implementation_version", "is invalid")
         result, error = receipt["result"], receipt["error"]
@@ -194,6 +216,23 @@ def _validate_evidence(packet: Mapping[str, Any]) -> None:
         else:
             if result is not None: raise ValidationError("packet.tool_result.result", "must be null for failed or denied actions")
             if not _bounded_string(error, "packet.tool_result.error", 4000): raise ValidationError("packet.tool_result.error", "must be nonempty for failure")
+        requested_source = None
+        if operation == "fetch_source":
+            source_id = arguments["source_id"]
+            descriptor = sources.get(source_id)
+            if isinstance(descriptor, Mapping):
+                if descriptor.get("kind") == "url":
+                    requested_source = descriptor
+                elif isinstance(descriptor.get("retrieval_receipt"), Mapping):
+                    requested_source = {"id": source_id, "kind": "url", "title": descriptor.get("title"),
+                        "url": descriptor["retrieval_receipt"].get("requested_url"),
+                        "published_at": descriptor.get("published_at")}
+        try:
+            from mathresearch.research.broker import validate_tool_receipt
+            validate_tool_receipt(receipt, tool_id=tool_id, request=request,
+                requested_source=requested_source, authorized_urls=authorized_urls)
+        except ValidationError as exc:
+            raise ValidationError(f"packet.tool_results.{tool_id}", "must be a valid operation receipt") from exc
 
 
 def _bounded_string(value: Any, field: str, maximum: int) -> str:
@@ -240,7 +279,7 @@ def _validate_tool_arguments(operation: str, arguments: Mapping[str, Any]) -> No
             if not isinstance(value, list): raise ValidationError(f"packet.tool_result.request.arguments.{key}", "must be an array")
             for index, number in enumerate(value): _integer(number, f"arguments.{key}[{index}]")
         elif operation == "search_perfect" and key == "parity":
-            if value not in {"odd", "even", "all"}: raise ValidationError("arguments.parity", "is invalid")
+            if not isinstance(value, str) or value not in {"odd", "even", "all"}: raise ValidationError("arguments.parity", "is invalid")
         elif key == "source_id": require_identifier(value, "arguments.source_id")
         else: _integer(value, f"arguments.{key}")
 
@@ -266,7 +305,7 @@ def _validate_tool_result_shape(operation: str, value: Any) -> None:
         if not isinstance(result["is_perfect"], bool): raise ValidationError("result.is_perfect", "must be a boolean")
     elif operation == "search_perfect":
         for key in ("lo", "hi", "tested_count"): _integer(result[key], f"result.{key}")
-        if result["parity"] not in {"odd", "even", "all"} or not isinstance(result["matches"], list):
+        if not isinstance(result["parity"], str) or result["parity"] not in {"odd", "even", "all"} or not isinstance(result["matches"], list):
             raise ValidationError("result", "has invalid search result fields")
         for item in result["matches"]: _integer(item, "result.matches[]")
     else:

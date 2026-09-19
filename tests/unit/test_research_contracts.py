@@ -130,13 +130,14 @@ class WorkerResultTests(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "checks"):
             validate_audit_for_draft(audit, valid_draft())
 
-    def test_draft_tool_ids_must_be_proposed_by_the_draft(self) -> None:
+    def test_draft_tool_ids_are_receipt_references_not_local_proposal_ids(self) -> None:
         draft = valid_draft()
-        draft["claims"][0]["tool_ids"] = ["tool-one"]  # type: ignore[index]
-        with self.assertRaisesRegex(ValidationError, r"claims\[0\].tool_ids"):
-            validate_result("branch", draft)
+        draft["tool_requests"] = [{"id": "proposal-one", "operation": "check_integer",
+                                    "arguments": {"n": 6}}]
+        draft["claims"][0]["tool_ids"] = ["receipt-one"]  # type: ignore[index]
+        self.assertEqual(validate_result("branch", draft)["claims"][0]["tool_ids"], ["receipt-one"])
 
-    def test_audit_step_and_tool_ids_must_belong_to_current_draft(self) -> None:
+    def test_audit_step_references_are_local_but_tool_ids_name_receipts(self) -> None:
         draft = valid_draft()
         draft["proof_steps"] = [{"id": "step-one", "statement": "s", "justification": "j",
                                   "depends_on": [], "citations": []}]
@@ -145,9 +146,8 @@ class WorkerResultTests(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, r"checks\[0\].checked_step_ids"):
             validate_audit_for_draft(audit, draft)
         audit = valid_audit()
-        audit["challenges"][0]["tool_ids"] = ["absent"]  # type: ignore[index]
-        with self.assertRaisesRegex(ValidationError, r"challenges\[0\].tool_ids"):
-            validate_audit_for_draft(audit, valid_draft())
+        audit["challenges"][0]["tool_ids"] = ["receipt-one"]  # type: ignore[index]
+        self.assertEqual(validate_audit_for_draft(audit, valid_draft())["challenges"][0]["tool_ids"], ["receipt-one"])
 
     def test_recursive_validator_accepts_only_json_null_for_null_schema(self) -> None:
         self.assertIsNone(_validate_shape(None, {"type": "null"}, "value"))

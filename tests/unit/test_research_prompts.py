@@ -206,6 +206,7 @@ class ResearchPromptTests(unittest.TestCase):
         ):
             receipt = tool_receipt(); mutate(receipt); malformed.append(receipt)
         malformed.extend((tool_receipt() | {"status": "failed"},
+                          tool_receipt() | {"status": []},
                           tool_receipt() | {"status": "failed", "result": None, "error": None},
                           tool_receipt() | {"status": "succeeded", "result": None}))
         for receipt in malformed:
@@ -232,6 +233,19 @@ class ResearchPromptTests(unittest.TestCase):
                 current_state = replace(state, results=MappingProxyType(dict(state.results) | {result_id: result}))
                 with self.assertRaises(ValidationError):
                     build_packet(current_state.request, current_state, current)
+
+    def test_packet_accepts_only_previously_committed_receipt_ids(self) -> None:
+        state = snapshot()
+        cited = draft("A bounded calculation supports this statement.")
+        cited["tool_requests"] = [{"id": "proposal-one", "operation": "check_integer", "arguments": {"n": 6}}]
+        cited["claims"][0]["tool_ids"] = ["check-one"]
+        state = replace(state, results=MappingProxyType(dict(state.results) | {"draft-one": cited}))
+        current = action("audit-two", "audit", dependencies=["draft-one"])
+        packet = build_packet(state.request, state, current)
+        self.assertEqual(packet["inputs"]["draft"]["claims"][0]["tool_ids"], ["check-one"])
+        packet["tool_results"] = {}
+        with self.assertRaises(ValidationError):
+            build_prompt("audit", packet)
 
     def test_rejects_hidden_fields_in_actions_and_packets(self) -> None:
         state = snapshot()

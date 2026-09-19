@@ -37,6 +37,14 @@ def fetch_history(*, requested_id: str = "source-one", result_id: str = "source-
     action = {"id": "a0001", "kind": "tool", "role": "fetch_source", "branch": None,
               "round": 0, "dependencies": [], "payload": {"id": "fetch-one",
               "operation": "fetch_source", "arguments": {"source_id": requested_id}}}
+    source_text = "Captured source text."
+    source_hash = hashlib.sha256(source_text.encode()).hexdigest()
+    source_record = {"id": result_id, "origin": "retrieved", "title": "Source one",
+        "url": result_url, "published_at": None, "captured_at": "2026-09-16T00:00:04Z",
+        "text": source_text, "sha256": source_hash,
+        "retrieval_receipt": {"requested_url": descriptor_url, "final_url": result_url,
+            "http_status": 200, "content_type": "text/plain", "raw_sha256": "2" * 64,
+            "text_sha256": source_hash, "byte_count": len(source_text.encode())}}
     return [
         event(1, "research_initialized", {"request": request}),
         event(2, "decision_recorded", {"decision_id": "d0001", "kind": "tool",
@@ -45,7 +53,7 @@ def fetch_history(*, requested_id: str = "source-one", result_id: str = "source-
               "packet_sha256": SHA}),
         event(4, "action_finished", {"action_id": "a0001", "outcome": "succeeded",
               "exit_code": 0, "stdout_sha256": "0" * 64, "stderr_sha256": "1" * 64,
-              "result": {"source": {"id": result_id, "url": result_url}}, "error": None,
+              "result": {"source": source_record}, "error": None,
               "telemetry": TELEMETRY}),
     ]
 
@@ -75,6 +83,24 @@ class ResearchEventTests(unittest.TestCase):
             with self.subTest(changed=changed), self.assertRaises(ValueError):
                 replay_research_events([ResearchEvent.from_json(event(1, "research_initialized", {"request": valid_request_payload()})),
                                         ResearchEvent.from_json(event(2, "provider_configured", invalid))])
+
+    def test_math_receipt_is_recomputed_from_the_intended_arguments(self) -> None:
+        action = {"id": "a0001", "kind": "tool", "role": "check_integer", "branch": None,
+                  "round": 0, "dependencies": [], "payload": {"id": "request-one",
+                  "operation": "check_integer", "arguments": {"n": 6}}}
+        history = [event(1, "research_initialized", {"request": valid_request_payload()}),
+            event(2, "decision_recorded", {"decision_id": "d0001", "kind": "tool",
+                "reason_code": "execute_check", "action": action, "details": DETAILS}),
+            event(3, "action_intended", {"action_id": "a0001", "packet": PACKET, "packet_sha256": SHA}),
+            event(4, "action_finished", {"action_id": "a0001", "outcome": "succeeded", "exit_code": 0,
+                "stdout_sha256": "0" * 64, "stderr_sha256": "1" * 64,
+                "result": {"n": 6, "proper_divisors": [1, 2, 3], "proper_divisor_sum": 6,
+                           "is_perfect": True}, "error": None, "telemetry": TELEMETRY})]
+        self.assertEqual(replay_research_events([ResearchEvent.from_json(item) for item in history]).results["a0001"]["is_perfect"], True)
+        corrupted = copy.deepcopy(history)
+        corrupted[-1]["body"]["result"]["is_perfect"] = False
+        with self.assertRaises(ValueError):
+            replay_research_events([ResearchEvent.from_json(item) for item in corrupted])
 
     def test_supplied_gate_text_is_immutable_snapshot_input(self) -> None:
         gate = event(2, "gate_opened", {"gate_id": "g0001", "kind": "missing_inputs", "questions": ["q"], "allowed_response": ["supply"], "resume_token": "0" * 64})
@@ -154,7 +180,7 @@ class ResearchEventTests(unittest.TestCase):
             fetch_history(requested_id="not-authorized", result_id="not-authorized"),
             fetch_history(result_id="different-source"),
             fetch_history(result_id="../unsafe"),
-            fetch_history(result_url="https://example.test/different"),
+            fetch_history(result_url="https://evil.test/different"),
         ):
             with self.subTest(result=history[-1]["body"]):
                 with self.assertRaises(ValueError):
@@ -182,7 +208,15 @@ class ResearchEventTests(unittest.TestCase):
                          "packet_sha256": SHA}),
                    event(6, "action_finished", {"action_id": "a0001", "outcome": "succeeded",
                          "exit_code": 0, "stdout_sha256": "0" * 64, "stderr_sha256": "1" * 64,
-                         "result": {"source": {"id": "gate-source", "url": gate_source["url"]}},
+                         "result": {"source": {"id": "gate-source", "origin": "retrieved",
+                             "title": "Gate source", "url": gate_source["url"], "published_at": None,
+                             "captured_at": "2026-09-16T00:00:06Z", "text": "Captured gate source.",
+                             "sha256": hashlib.sha256(b"Captured gate source.").hexdigest(),
+                             "retrieval_receipt": {"requested_url": gate_source["url"],
+                                 "final_url": gate_source["url"], "http_status": 200,
+                                 "content_type": "text/plain", "raw_sha256": "2" * 64,
+                                 "text_sha256": hashlib.sha256(b"Captured gate source.").hexdigest(),
+                                 "byte_count": len(b"Captured gate source.")}}},
                          "error": None, "telemetry": TELEMETRY})]
 
         snapshot = replay_research_events([ResearchEvent.from_json(item) for item in history])

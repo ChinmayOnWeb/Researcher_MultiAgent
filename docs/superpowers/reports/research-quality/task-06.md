@@ -1,0 +1,13 @@
+# Task 6: provenance and bounded broker operations
+
+Implemented citation/source and receipt provenance checks, deterministic math operations, exact-URL HTTPS retrieval, and a trusted broker child process. A request can only invoke an explicitly enabled broker capability. Invalid requests are rejected before launch; denied capabilities create a denied receipt without launching a child. Worker timeout becomes one failed receipt and is not retried.
+
+The source transport accepts only authorized HTTPS URL descriptors on port 443. It rejects IP literals and any hostname with a non-global DNS answer, connects to the selected validated address while retaining the hostname for TLS, and does not inherit proxy settings. It handles redirects explicitly, requiring an exact authorized URL for a host change. Responses are bounded to 1 MiB and 15 seconds by the child boundary, accept only declared UTF-8/ASCII plain text or HTML, normalize without executing or retaining script/style/noscript content, and preserve raw/text hashes and capture metadata. Tests inject DNS and transport responses; no live network fetch was performed.
+
+Mathematical operations use integer arithmetic only and enforce the plan’s input/range limits. Event replay recomputes mathematical receipts from their intended arguments, so a forged result cannot become committed evidence. Source records validate their descriptor binding, hashes, retrieval metadata, capture time, and authorized redirect destination. `check_provenance` checks exact citation spans, content hashes, and successful receipt references; it does not infer truth or semantic entailment.
+
+Astra’s ruling was applied: Claim and Challenge `tool_ids` name committed ToolReceipt coordinator Action IDs, never local proposed ToolRequest IDs. Subsequent packets must contain the cited successful receipt. The broker/router engine will enforce lifecycle visibility and deduplication in its owning tasks.
+
+Malformed unhashable status and parity values are also rejected as `ValidationError` rather than escaping as `TypeError`.
+
+Verification: `$env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_store tests.unit.test_research_events tests.unit.test_research_broker tests.unit.test_research_sources tests.unit.test_research_math_checks tests.unit.test_research_provenance tests.unit.test_research_prompts tests.unit.test_research_contracts -q` — exit 0, 72 tests. `git diff --check` — clean.

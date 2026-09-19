@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import shutil
 import tempfile
 import unittest
@@ -132,7 +133,14 @@ class ResearchStoreTests(unittest.TestCase):
                     locked.append(intent)
                     stdout = locked.write_capture("a0001", "stdout.bin", b"out")
                     stderr = locked.write_capture("a0001", "stderr.log", b"err")
-                source = {"id": "source-one", "url": source_url}
+                source_text = "Captured storage source."
+                source_hash = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
+                source = {"id": "source-one", "origin": "retrieved", "title": "Source one",
+                    "url": source_url, "published_at": None, "captured_at": "2026-09-16T00:00:04Z",
+                    "text": source_text, "sha256": source_hash,
+                    "retrieval_receipt": {"requested_url": source_url, "final_url": source_url,
+                        "http_status": 200, "content_type": "text/plain", "raw_sha256": "2" * 64,
+                        "text_sha256": source_hash, "byte_count": len(source_text.encode("utf-8"))}}
                 finish = self._event(4, "action_finished", {"action_id": "a0001",
                                      "outcome": "succeeded", "exit_code": 0,
                                      "stdout_sha256": stdout, "stderr_sha256": stderr,

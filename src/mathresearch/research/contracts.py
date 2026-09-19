@@ -165,7 +165,7 @@ def _validate_draft(data: dict[str, Any], role: str) -> None:
     _assert_dag(data["claims"], "claims"); _assert_dag(data["proof_steps"], "proof_steps")
     _unique_ids(data["approaches"], "approaches")
     requests = data["tool_requests"]
-    request_ids = _unique_ids(requests, "tool_requests")
+    _unique_ids(requests, "tool_requests")
     for index, request in enumerate(requests): _validate_tool_request(request, f"tool_requests[{index}]")
     for index, claim in enumerate(data["claims"]):
         prefix = f"claims[{index}]"
@@ -173,8 +173,6 @@ def _validate_draft(data: dict[str, Any], role: str) -> None:
             raise ValidationError(prefix + ".step_ids", "must refer to local proof steps")
         if any(dependency not in claim_ids for dependency in claim["depends_on"]):
             raise ValidationError(prefix + ".depends_on", "must refer to local claims")
-        if any(tool_id not in request_ids for tool_id in claim["tool_ids"]):
-            raise ValidationError(prefix + ".tool_ids", "must refer to draft tool requests")
         if claim["kind"] == "source_assertion" and not claim["citations"]:
             raise ValidationError(prefix + ".citations", "source assertions require a citation")
         if claim["kind"] == "deduction" and not (claim["step_ids"] or claim["tool_ids"]):
@@ -191,7 +189,15 @@ def _validate_draft(data: dict[str, Any], role: str) -> None:
 def validate_audit_for_draft(audit: Mapping[str, Any], draft: Mapping[str, Any]) -> dict[str, Any]:
     """Validate cross-result audit references once the current Draft is available."""
     checked_audit = validate_result("audit", audit)
-    checked_draft = validate_result("branch", draft)
+    errors = []
+    checked_draft = None
+    for producer in ("answer", "branch", "synthesize", "revise"):
+        try:
+            checked_draft = validate_result(producer, draft)
+            break
+        except ValidationError as exc:
+            errors.append(exc)
+    if checked_draft is None: raise errors[0]
     claim_ids = {claim["id"] for claim in checked_draft["claims"]}
     if {check["claim_id"] for check in checked_audit["checks"]} != claim_ids:
         raise ValidationError("checks", "must contain one check for every draft claim")
@@ -201,13 +207,9 @@ def validate_audit_for_draft(audit: Mapping[str, Any], draft: Mapping[str, Any])
     if not critical <= {challenge["claim_id"] for challenge in checked_audit["challenges"]}:
         raise ValidationError("challenges", "must challenge every critical claim")
     step_ids = {step["id"] for step in checked_draft["proof_steps"]}
-    tool_ids = {request["id"] for request in checked_draft["tool_requests"]}
     for index, check in enumerate(checked_audit["checks"]):
         if any(step_id not in step_ids for step_id in check["checked_step_ids"]):
             raise ValidationError(f"checks[{index}].checked_step_ids", "must refer to current draft proof steps")
-    for index, challenge in enumerate(checked_audit["challenges"]):
-        if any(tool_id not in tool_ids for tool_id in challenge["tool_ids"]):
-            raise ValidationError(f"challenges[{index}].tool_ids", "must refer to current draft tool requests")
     return checked_audit
 
 
