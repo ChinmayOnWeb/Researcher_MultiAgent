@@ -207,7 +207,8 @@ def _execute_action(run: LockedResearchRun, action: Mapping[str, Any], adapter: 
         observed = {"model": None, "effort": None}
     else:
         try:
-            with tempfile.TemporaryDirectory(prefix="research-action-", dir=str(scratch_parent)) as scratch_name:
+            with tempfile.TemporaryDirectory(prefix="research-action-", dir=str(scratch_parent),
+                                              ignore_cleanup_errors=True) as scratch_name:
                 scratch = Path(scratch_name)
                 if action["kind"] == "worker":
                     if adapter is None: raise ValueError("worker launch requires a configured provider")
