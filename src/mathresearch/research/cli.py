@@ -131,7 +131,8 @@ def _evaluate(arguments: argparse.Namespace) -> int:
                         manifest["caps"]["max_session_usage_delta_percent"]))
         comparison = store.finalize(store.grades(),
             deep_case_ids={case["id"] for case in cases if case["mode"] != "quick"},
-            quick_case_ids={case["id"] for case in cases if case["mode"] == "quick"})
+            quick_case_ids={case["id"] for case in cases if case["mode"] == "quick"},
+            required_replicates=int(manifest["replicates"]))
     except (OSError, ValidationError, ValueError, RuntimeError) as error:
         return _invalid(f"evaluation preparation failed: {error}", json_output=arguments.json_output)
     payload = {"comparison_status": comparison["comparison_status"],

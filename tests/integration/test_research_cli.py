@@ -227,6 +227,9 @@ class ResearchCliIntegrationTests(unittest.TestCase):
         self.assertEqual(manifest["case_ids"], ["odd-sum", "perfect-six", "bounded-search"])
         self.assertEqual(manifest["replicates"], 1)
         self.assertEqual(len(manifest["ordering"]), 3)
+        comparison = json.loads((output / "comparison.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(comparison["missing_trials"]), 6)
+        self.assertTrue(all(item[1] == 1 for item in comparison["missing_trials"]))
 
     def test_evaluation_rejects_unknown_smoke_case_without_creating_output(self) -> None:
         output = self.root / "invalid-smoke-evaluation"
