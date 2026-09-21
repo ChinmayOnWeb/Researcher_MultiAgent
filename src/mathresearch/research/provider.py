@@ -4,15 +4,20 @@ from __future__ import annotations
 
 import re
 import shutil
-from typing import Any
+from typing import Any, Mapping
 
 from mathresearch.adapters.codex import CodexAdapter
 from mathresearch.adapters.base import Adapter
 from mathresearch.contracts.research_request import ResearchRequest
 
 
-def create_research_provider(request: ResearchRequest) -> Adapter:
+def create_research_provider(request: ResearchRequest, *,
+                             recorded_config: Mapping[str, Any] | None = None) -> Adapter:
     """Resolve and preflight Codex using the immutable requested model and effort."""
+    if recorded_config is not None:
+        if (recorded_config.get("model_requested") != request.provider["model"] or
+                recorded_config.get("effort_requested") != request.provider["reasoning_effort"]):
+            raise ValueError("recorded provider configuration disagrees with the immutable request")
     executable = shutil.which("codex")
     if executable is None:
         raise ValueError("Codex executable is unavailable")
