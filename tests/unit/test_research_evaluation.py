@@ -85,6 +85,23 @@ class ResearchEvaluationTests(unittest.TestCase):
         self.assertEqual(summary["comparison_status"], "incomplete")
         self.assertIn("source hash mismatch: sample/1", summary["integrity_errors"])
 
+    def test_extra_trials_outside_the_manifest_invalidate_comparison(self) -> None:
+        trials = [_trial("baseline", report="one"), _trial("pipeline", report="two"),
+                  _trial("pipeline", report="extra") | {"replicate": 2}]
+        result = compare_trials(trials, [_grade("baseline"), _grade("pipeline")],
+            required_replicates=1, case_ids={"sample"}, deep_case_ids={"sample"})
+        self.assertEqual(result["comparison_status"], "incomplete")
+        self.assertTrue(any("unexpected" in error for error in result["integrity_errors"]))
+
+    def test_malformed_grade_is_incomplete_without_crashing_aggregation(self) -> None:
+        trials = [_trial("baseline", report="one"), _trial("pipeline", report="two")]
+        grade = _grade("pipeline") | {"dimensions": None, "critical_failures": None}
+        result = compare_trials(trials, [_grade("baseline"), grade],
+            required_replicates=1, case_ids={"sample"}, deep_case_ids={"sample"})
+        self.assertEqual(result["comparison_status"], "incomplete")
+        self.assertFalse(result["quality_gain_demonstrated"])
+        self.assertFalse(result["efficiency_gate_passed"])
+
     def test_manifest_is_immutable_and_alternates_condition_order(self) -> None:
         cases, cases_hash, rubric_hash = load_cases(CASES)
         manifest = make_manifest(cases=cases, cases_hash=cases_hash,
@@ -196,7 +213,7 @@ class ResearchEvaluationTests(unittest.TestCase):
                         "report": answer, "cost_usd": None}
 
             outcome = run_paired_trials([case], store, trial_runner=fixed_trial,
-                usage_checkpoint=lambda *args: 0.0)
+                usage_checkpoint=lambda *args: 49.0)
             self.assertEqual(len(outcome["trial_conditions_recorded"]), 6)
             self.assertEqual(outcome["provider_calls_reserved"], 6)
             self.assertEqual(len(store.trial_records()), 6)

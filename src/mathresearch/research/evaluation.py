@@ -15,7 +15,6 @@ import json
 import math
 import os
 import re
-import time
 import statistics
 import time
 from typing import Any
@@ -223,6 +222,9 @@ class EvaluationStore:
                                      checks[0].get("observed_remaining_percent"))
             if baseline is None:
                 raise ValidationError("session_usage", "existing readings lack a resumable 5-hour quota baseline")
+            previous = checks[-1]["observed_remaining_percent"]
+            if observed_remaining_percent > previous:
+                raise ValidationError("session_usage", "quota increased or reset; the saved allowance cannot be measured reliably")
         else:
             baseline = float(observed_remaining_percent)
         quota_drop = float(baseline) - float(observed_remaining_percent)
@@ -233,7 +235,7 @@ class EvaluationStore:
                        "recorded_at_utc": datetime.now(timezone.utc).isoformat()})
         write_json(path, checks)
         allowance = _read_json(self.directory / "manifest.json")["caps"]["max_session_usage_delta_percent"]
-        return quota_drop < allowance
+        return observed_remaining_percent > 0 and quota_drop < allowance
 
     def _trial_path(self, case_id: str, replicate: int, condition: str) -> Path:
         if condition not in CONDITIONS or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", case_id):
@@ -339,11 +341,20 @@ class EvaluationStore:
 
     def finalize(self, grades: Sequence[Mapping[str, Any]], *, deep_case_ids: set[str],
                  quick_case_ids: set[str] | None = None,
-                 required_replicates: int = 3) -> dict[str, Any]:
+                 required_replicates: int | None = None) -> dict[str, Any]:
+        with acquire_run_lock(self.directory):
+            return self._finalize_locked(grades, deep_case_ids=deep_case_ids,
+                quick_case_ids=quick_case_ids, required_replicates=required_replicates)
+
+    def _finalize_locked(self, grades: Sequence[Mapping[str, Any]], *, deep_case_ids: set[str],
+                         quick_case_ids: set[str] | None,
+                         required_replicates: int | None) -> dict[str, Any]:
         manifest = _read_json(self.directory / "manifest.json")
+        if required_replicates is not None and required_replicates != manifest["replicates"]:
+            raise ValidationError("replicates", "finalization must match the immutable manifest")
         budget = _read_json(self.directory / "budget.json")
         comparison = compare_trials(self.trial_records(), grades,
-            required_replicates=required_replicates, deep_case_ids=deep_case_ids,
+            required_replicates=manifest["replicates"], deep_case_ids=deep_case_ids,
             quick_case_ids=quick_case_ids or set(),
             case_ids=set(manifest["case_ids"]), requested_model=manifest["model"],
             requested_effort=manifest["effort"], caps=manifest["caps"],
@@ -386,13 +397,13 @@ def make_grade(*, case_id: str, replicate: int, condition: str, grader: str,
                evidence: Sequence[str]) -> dict[str, Any]:
     if not isinstance(grader, str) or not grader.strip():
         raise ValidationError("grader", "must identify a human or advisory grader")
-    if set(dimensions) != set(DIMENSIONS):
+    if not isinstance(dimensions, Mapping) or set(dimensions) != set(DIMENSIONS):
         raise ValidationError("dimensions", "must grade all five rubric dimensions")
     if any(isinstance(value, bool) or not isinstance(value, int) or value not in (0, 1, 2) for value in dimensions.values()):
         raise ValidationError("dimensions", "scores must be integers from zero to two")
-    if not evidence or any(not isinstance(item, str) or not item.strip() for item in evidence):
+    if not isinstance(evidence, (list, tuple)) or not evidence or any(not isinstance(item, str) or not item.strip() for item in evidence):
         raise ValidationError("evidence", "at least one evidence passage is required")
-    if any(not isinstance(item, str) or not item.strip() for item in critical_failures):
+    if not isinstance(critical_failures, (list, tuple)) or any(not isinstance(item, str) or not item.strip() for item in critical_failures):
         raise ValidationError("critical_failures", "entries must be nonempty strings")
     if condition not in CONDITIONS:
         raise ValidationError("condition", "must be baseline or pipeline")
@@ -423,6 +434,8 @@ def compare_trials(trials: Sequence[Mapping[str, Any]], grades: Sequence[Mapping
     all_case_ids = sorted(case_ids or ({key[0] for key in trial_map} | {key[0] for key in grade_map}))
     expected = {(case_id, replicate, condition) for case_id in all_case_ids
                 for replicate in range(1, required_replicates + 1) for condition in CONDITIONS}
+    unexpected = [f"unexpected trial or grade: {key}"
+                  for key in (trial_map.keys() | grade_map.keys()) - expected]
     missing_trials = sorted(expected - trial_map.keys())
     missing_grades = sorted(expected - grade_map.keys())
     bad_trials = [key for key, item in trial_map.items() if item.get("status") != "complete" or item.get("report") is None]
@@ -456,14 +469,17 @@ def compare_trials(trials: Sequence[Mapping[str, Any]], grades: Sequence[Mapping
     if caps and total_wall_seconds > caps["max_wall_seconds"]:
         cap_errors.append("actual trial wall time exceeded the manifest cap")
     invalid_grades = []
-    for key, grade in grade_map.items():
-        dimensions = grade.get("dimensions")
-        if (not isinstance(grade.get("grader"), str) or not grade.get("grader", "").strip() or
-            not isinstance(dimensions, Mapping) or set(dimensions) != set(DIMENSIONS) or
-            any(isinstance(value, bool) or not isinstance(value, int) or value not in (0, 1, 2) for value in dimensions.values()) or
-            grade.get("score") != sum(dimensions.values()) or not grade.get("evidence")):
+    for key, grade in list(grade_map.items()):
+        try:
+            validated = make_grade(case_id=key[0], replicate=key[1], condition=key[2],
+                grader=grade.get("grader"), dimensions=grade.get("dimensions"),
+                critical_failures=grade.get("critical_failures"), evidence=grade.get("evidence"))
+            if grade.get("score") != validated["score"]:
+                raise ValidationError("grade", "score disagrees with dimensions")
+        except ValidationError:
             invalid_grades.append(f"invalid grade: {key}")
-    complete = not (duplicates or missing_trials or missing_grades or bad_trials or mismatched_pairs or
+            del grade_map[key]
+    complete = not (unexpected or duplicates or missing_trials or missing_grades or bad_trials or mismatched_pairs or
                     invalid_grades or bad_hashes or wrong_quick_calls or wrong_baseline_calls or settings_errors or cap_errors)
     score_differences: list[float] = []
     paired: list[dict[str, Any]] = []
@@ -527,12 +543,12 @@ def compare_trials(trials: Sequence[Mapping[str, Any]], grades: Sequence[Mapping
             "missing_trials": [list(key) for key in missing_trials],
             "missing_grades": [list(key) for key in missing_grades],
             "bad_trials": [list(key) for key in bad_trials],
-            "integrity_errors": duplicates + mismatched_pairs + invalid_grades + bad_hashes + wrong_quick_calls + wrong_baseline_calls + settings_errors + cap_errors,
+            "integrity_errors": unexpected + duplicates + mismatched_pairs + invalid_grades + bad_hashes + wrong_quick_calls + wrong_baseline_calls + settings_errors + cap_errors,
             "mean_paired_score_delta": improvement, "paired_scores": paired,
             "mean_deep_paired_score_delta": mean_deep_delta,
             "critical_failure_counts": {"baseline": baseline_failures, "pipeline": pipeline_failures},
-            "quality_gain_demonstrated": quality_gain,
-            "efficiency_gate_passed": efficiency_gate,
+            "quality_gain_demonstrated": bool(complete and quality_gain),
+            "efficiency_gate_passed": bool(complete and efficiency_gate),
             "median_deep_latency_ratio": statistics.median(deep_ratios) if deep_ratios else None,
             "median_quick_latency_ratio": statistics.median(quick_ratios) if quick_ratios else None,
             "mean_pipeline_score": statistics.mean(deep_scores) if deep_scores else None,
@@ -544,6 +560,7 @@ def compare_trials(trials: Sequence[Mapping[str, Any]], grades: Sequence[Mapping
             "known_baseline_cost_usd": sum(item["cost_usd"] for key, item in trial_map.items() if key[2] == "baseline" and isinstance(item.get("cost_usd"), (int, float))),
             "known_pipeline_cost_usd": sum(item["cost_usd"] for key, item in trial_map.items() if key[2] == "pipeline" and isinstance(item.get("cost_usd"), (int, float))),
             "actual_provider_calls": actual_provider_calls,
+            "provider_call_count_basis": "conservative_action_attempts; not confirmed remote requests",
             "actual_wall_seconds": total_wall_seconds,
             "known_input_tokens": sum(item["input_tokens"] for item in trial_map.values() if isinstance(item.get("input_tokens"), int) and not isinstance(item.get("input_tokens"), bool)),
             "known_output_tokens": sum(item["output_tokens"] for item in trial_map.values() if isinstance(item.get("output_tokens"), int) and not isinstance(item.get("output_tokens"), bool)),
@@ -556,8 +573,42 @@ def run_paired_trials(cases: Sequence[Mapping[str, Any]], store: EvaluationStore
                       monotonic: Any = time.monotonic) -> dict[str, Any]:
     """Run paired trials under an exclusive output-directory lock."""
     with acquire_run_lock(store.directory):
-        return _run_paired_trials_locked(cases, store, trial_runner=trial_runner,
-            usage_checkpoint=usage_checkpoint, monotonic=monotonic)
+        initial_wall = _read_json(store.directory / "budget.json")["wall_seconds_observed"]
+        initial_trials = {path.parent.name for path in (store.directory / "trials").glob("*/trial.json")}
+        started = monotonic()
+        waiting_seconds = 0.0
+
+        def active_clock() -> float:
+            return monotonic() - waiting_seconds
+
+        def checkpoint(*args: Any) -> Any:
+            nonlocal waiting_seconds
+            before = monotonic()
+            try:
+                return usage_checkpoint(*args)
+            finally:
+                waiting_seconds += max(0.0, monotonic() - before)
+
+        result = {"stopped_reason": "evaluation_error", "trial_conditions_recorded": []}
+        try:
+            result = _run_paired_trials_locked(cases, store, trial_runner=trial_runner,
+                usage_checkpoint=checkpoint, monotonic=active_clock)
+        except KeyboardInterrupt:
+            result["stopped_reason"] = "user_cancelled"
+        finally:
+            spent = _read_json(store.directory / "budget.json")
+            unrecorded = max(0.0, active_clock() - started -
+                             (spent["wall_seconds_observed"] - initial_wall))
+            store.record_elapsed(unrecorded)
+            budget = _read_json(store.directory / "budget.json")
+            result.update({"provider_calls_reserved": budget["provider_calls_reserved"],
+                           "wall_seconds_observed": budget["wall_seconds_observed"]})
+            result["trial_conditions_recorded"] = [f"{item['case_id']}/{item['replicate']}/{item['condition']}"
+                for path in sorted((store.directory / "trials").glob("*/trial.json"))
+                if path.parent.name not in initial_trials
+                for item in [_read_json(path)] if item.get("status") != "intent"]
+            write_json(store.directory / "execution.json", result)
+        return result
 
 
 def _run_paired_trials_locked(cases: Sequence[Mapping[str, Any]], store: EvaluationStore, *,
@@ -587,9 +638,9 @@ def _run_paired_trials_locked(cases: Sequence[Mapping[str, Any]], store: Evaluat
             path = store._trial_path(case_id, replicate, condition)
             if path.exists():
                 existing = _read_json(path)
-                if existing.get("status") in {"complete", "failed", "ambiguous"}:
+                if existing.get("status") == "complete":
                     continue
-                stopped_reason = "unresolved_trial_intent"
+                stopped_reason = "previous_trial_failed_or_unresolved"
                 break
             elapsed_session = monotonic() - started
             remaining = int(wall_cap - initially_recorded - elapsed_session)
@@ -617,9 +668,13 @@ def _run_paired_trials_locked(cases: Sequence[Mapping[str, Any]], store: Evaluat
             if condition == "pipeline":
                 (trial_dir / "run").mkdir(parents=True, exist_ok=True)
             before = monotonic()
-            timeout = max(1, int(wall_cap - initially_recorded - (before - started) - preflight_reserve))
+            timeout = int(wall_cap - initially_recorded - (before - started) - preflight_reserve)
             try:
-                raw = trial_runner(case, condition, pair_inputs, trial_dir, timeout)
+                if timeout <= 0:
+                    raw = {"status": "failed", "provider_calls": 0,
+                           "error": "wall_time_cap_reached_before_launch"}
+                else:
+                    raw = trial_runner(case, condition, pair_inputs, trial_dir, timeout)
                 elapsed = max(0.0, monotonic() - before)
                 trial = make_trial(case_id=case_id, replicate=replicate,
                     condition=condition, status=raw["status"], report=raw.get("report"),
@@ -627,7 +682,8 @@ def _run_paired_trials_locked(cases: Sequence[Mapping[str, Any]], store: Evaluat
                     cost_usd=raw.get("cost_usd"), source_hash=pair_inputs["source_hash"])
                 trial.update({"reserved_provider_calls": reserve_calls,
                     "requested_model": manifest["model"], "requested_effort": manifest["effort"]})
-                for key in ("observed_model", "observed_effort", "input_tokens", "output_tokens"):
+                for key in ("observed_model", "observed_effort", "input_tokens", "output_tokens",
+                            "provider_outcome", "provider_exit_code"):
                     if key in raw:
                         trial[key] = raw[key]
                 if "error" in raw:
@@ -635,16 +691,25 @@ def _run_paired_trials_locked(cases: Sequence[Mapping[str, Any]], store: Evaluat
                 store.record_result(trial)
                 store.record_elapsed(elapsed)
                 completed.append(f"{case_id}/{replicate}/{condition}")
+                if trial["status"] != "complete":
+                    stopped_reason = "trial_failed"
+                    break
+            except KeyboardInterrupt:
+                elapsed = max(0.0, monotonic() - before)
+                if _read_json(path).get("status") == "intent":
+                    store.mark_ambiguous(case_id, replicate, condition,
+                        reason="user interrupted trial; provider completion is unknown",
+                        wall_seconds=elapsed)
+                stopped_reason = "user_cancelled"
+                break
             except Exception as error:
                 elapsed = max(0.0, monotonic() - before)
-                store.mark_ambiguous(case_id, replicate, condition,
-                    reason=f"trial outcome unclear: {type(error).__name__}: {error}",
-                    wall_seconds=elapsed)
-                try:
-                    store.record_elapsed(elapsed)
-                except ValidationError:
-                    pass
-                continue
+                if _read_json(path).get("status") == "intent":
+                    store.mark_ambiguous(case_id, replicate, condition,
+                        reason=f"trial outcome unclear: {type(error).__name__}: {error}",
+                        wall_seconds=elapsed)
+                stopped_reason = "trial_ambiguous"
+                break
         if stopped_reason:
             break
     spent = _read_json(store.directory / "budget.json")

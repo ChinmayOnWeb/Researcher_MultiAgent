@@ -48,6 +48,16 @@ def execute_worker(adapter: Adapter, task: WorkerInput, *, scratch: Path, timeou
     stdin_writer.start()
     try:
         exit_code = process.wait(timeout=timeout_seconds)
+    except KeyboardInterrupt:
+        teardown_ok = _terminate_tree(process, job)
+        _close_stdin(process)
+        stdin_writer.join(timeout=1)
+        stdout_reader.join(timeout=2); stderr_reader.join(timeout=2)
+        if teardown_ok:
+            _close_streams(process)
+        else:
+            raise RuntimeError("provider interruption cleanup could not be confirmed")
+        raise
     except subprocess.TimeoutExpired:
         teardown_ok = _terminate_tree(process, job)
         _close_stdin(process)

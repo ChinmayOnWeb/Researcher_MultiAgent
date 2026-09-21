@@ -23,7 +23,7 @@ from .contracts import result_schema, validate_result
 from .provider import check_provider_observation, create_research_provider, parse_provider_observation
 from mathresearch.worker_process import execute_worker
 from .store import load_research_status
-from .evaluation import EvaluationStore, load_cases, make_manifest, run_paired_trials
+from .evaluation import EvaluationStore, load_cases, make_manifest, run_paired_trials, write_json
 
 
 _RESULT_KEYS = ("run_status", "answer_status", "model_calls_used", "tool_calls_used",
@@ -147,6 +147,11 @@ def _evaluate(arguments: argparse.Namespace) -> int:
         payload["provider_calls_reserved"] = run_result["provider_calls_reserved"]
         payload["wall_seconds_observed"] = run_result["wall_seconds_observed"]
     _emit(payload, arguments.json_output)
+    if run_result and run_result["stopped_reason"]:
+        reason = run_result["stopped_reason"]
+        return int(ExitCode.CANCELLED if reason == "user_cancelled" else
+                   ExitCode.BUDGET_EXHAUSTED if reason in {"session_usage_cap_reached", "wall_time_cap_reached"}
+                   else ExitCode.BLOCKED)
     return int(ExitCode.SUCCESS)
 
 
@@ -154,7 +159,8 @@ def _prompt_session_usage(case_id: str, replicate: int, condition: str,
                           maximum: float = 10.0) -> float | None:
     print(f"Current 5-hour Codex quota remaining percentage before {case_id}/{replicate}/{condition}? "
           f"Enter the remaining percentage (0-100). The evaluator stops after a {maximum:g}-point drop "
-          "from its saved starting reading.",
+          "from its saved starting reading. Read the current dashboard; do not reuse an earlier reading. "
+          "Enter blank to stop. This is a manual checkpoint; monitor usage during the trial too.",
           file=sys.stderr, flush=True)
     try:
         raw = input().strip()
@@ -183,15 +189,20 @@ def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
         request_file = trial_dir / "request.json"
         request_file.write_text(json.dumps(request.to_json(), ensure_ascii=False), encoding="utf-8")
         initialize(request_file, run_dir)
-        snapshot = run_research(run_dir)
+        worker_tmp = trial_dir / "worker-tmp"
+        worker_tmp.mkdir(parents=True, exist_ok=True)
+        snapshot = run_research(run_dir, scratch_parent=worker_tmp)
         report_path = run_dir / "report.md"
         report = report_path.read_text(encoding="utf-8") if report_path.is_file() else None
-        telemetry = list(snapshot.action_telemetry.values())
-        observed_models = {item.get("model_observed") for item in telemetry if item.get("model_observed")}
-        observed_efforts = {item.get("effort_observed") for item in telemetry if item.get("effort_observed")}
+        telemetry = [item for action_id, item in snapshot.action_telemetry.items()
+                     if snapshot.actions[action_id]["kind"] == "worker"]
+        observed_models = {item.get("model_observed") for item in telemetry}
+        observed_efforts = {item.get("effort_observed") for item in telemetry}
+        errors = [str(item["error"]) for item in snapshot.outcomes.values() if item.get("error")]
         return {"status": "complete" if snapshot.status == "complete" else "failed",
                 "provider_calls": snapshot.model_calls_used, "report": report,
                 "cost_usd": None,
+                "error": "; ".join(errors) or (snapshot.reason if snapshot.status != "complete" else None),
                 "observed_model": next(iter(observed_models)) if len(observed_models) == 1 else None,
                 "observed_effort": next(iter(observed_efforts)) if len(observed_efforts) == 1 else None,
                 "input_tokens": None, "output_tokens": None}
@@ -220,6 +231,11 @@ def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
     scratch.mkdir(parents=True, exist_ok=True)
     output = execute_worker(adapter, WorkerInput("baseline", prompt, result_schema("answer")),
         scratch=scratch, timeout_seconds=worker_timeout)
+    (trial_dir / "stdout.bin").write_bytes(output.stdout)
+    (trial_dir / "stderr.log").write_bytes(output.stderr)
+    write_json(trial_dir / "provider-result.json", {
+        "outcome": output.outcome, "exit_code": output.exit_code,
+        "error": output.error, "payload": output.payload})
     observed = parse_provider_observation(output.stderr)
     mismatch = check_provider_observation(request, observed)
     report = None
@@ -232,6 +248,7 @@ def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
                     "cost_usd": None, "observed_model": observed.get("model"),
                     "observed_effort": observed.get("effort"),
                     "input_tokens": None, "output_tokens": None,
+                    "provider_outcome": output.outcome, "provider_exit_code": output.exit_code,
                     "error": f"baseline result schema error: {error}"}
         lines = ["# Single-call baseline", "",
             f"Requested model: `{manifest['model']}`; requested effort: `{manifest['effort']}`.",
@@ -243,6 +260,8 @@ def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
             lines.append("")
         lines.extend(["## Answer", "", f"Question status: `{result['question_status']}`", ""])
         lines.extend("> " + line for line in result["answer"].splitlines())
+        lines.extend(["", "## Structured draft", "", "```json",
+                      json.dumps(result, ensure_ascii=False, indent=2), "```"])
         report = "\n".join(lines) + "\n"
         status = "complete"
     if report is not None:
@@ -252,6 +271,7 @@ def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
             "cost_usd": None, "observed_model": observed.get("model"),
             "observed_effort": observed.get("effort"),
             "input_tokens": None, "output_tokens": None,
+            "provider_outcome": output.outcome, "provider_exit_code": output.exit_code,
             "error": mismatch or output.error}
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -78,6 +79,23 @@ class ExecuteWorkerTests(unittest.TestCase):
         self.assertEqual(output.outcome, "timed_out")
         self.assertIsNone(output.payload)
         self.assertIn(b"started", output.stdout)
+
+    def test_keyboard_interrupt_terminates_the_started_child(self) -> None:
+        self.write_child("import time; time.sleep(30)\n")
+        original_wait = subprocess.Popen.wait
+        interrupted = []
+
+        def interrupt_once(process, *args, **kwargs):
+            if not interrupted:
+                interrupted.append(process)
+                raise KeyboardInterrupt
+            return original_wait(process, *args, **kwargs)
+
+        with patch.object(subprocess.Popen, "wait", new=interrupt_once):
+            with self.assertRaises(KeyboardInterrupt):
+                execute_worker(_StubAdapter(self.script), self.task(), scratch=self.scratch, timeout_seconds=5)
+        self.assertEqual(len(interrupted), 1)
+        self.assertIsNotNone(interrupted[0].poll(), "interruption left the provider child alive")
 
     def test_timeout_covers_a_large_prompt_when_child_never_reads_stdin(self) -> None:
         self.write_child("import time; time.sleep(30)\n")
