@@ -12,6 +12,7 @@
 - Added synthetic fixed-output evaluator coverage for a completed but circular response and an explicitly graded qualified response.
 - Updated the binding comparison protocol per Astra decisions RQ-003/RQ-004: effort is selected once on the supported adjustable effort control and frozen across both conditions; limits are 240 calls, 7,200 active seconds, and a manually monitored 10 percentage-point allowance from the saved starting reading of the five-hour quota remaining meter.
 - Saved the first five-hour quota reading as the evaluation's usage baseline; later checks stop before another trial once the quota remaining drops by 10 points. Astra clarified this as an incremental task allowance, not an absolute ceiling on total session consumption.
+- User preference update: use `gpt-5.6-terra` with medium effort for tests and product runs unless explicitly overridden. Live evaluation no longer asks for the five-hour quota reading; it records `session_usage_monitoring=disabled_by_user` and relies on the call and wall-time caps.
 
 ## Verification
 

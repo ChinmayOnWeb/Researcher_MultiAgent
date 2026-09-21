@@ -569,7 +569,7 @@ def compare_trials(trials: Sequence[Mapping[str, Any]], grades: Sequence[Mapping
 
 
 def run_paired_trials(cases: Sequence[Mapping[str, Any]], store: EvaluationStore, *,
-                      trial_runner: Any, usage_checkpoint: Any,
+                      trial_runner: Any, usage_checkpoint: Any | None = None,
                       monotonic: Any = time.monotonic) -> dict[str, Any]:
     """Run paired trials under an exclusive output-directory lock."""
     with acquire_run_lock(store.directory):
@@ -583,6 +583,8 @@ def run_paired_trials(cases: Sequence[Mapping[str, Any]], store: EvaluationStore
 
         def checkpoint(*args: Any) -> Any:
             nonlocal waiting_seconds
+            if usage_checkpoint is None:
+                return None
             before = monotonic()
             try:
                 return usage_checkpoint(*args)
@@ -649,10 +651,10 @@ def _run_paired_trials_locked(cases: Sequence[Mapping[str, Any]], store: Evaluat
                 stopped_reason = "wall_time_cap_reached"
                 break
             observed = usage_checkpoint(case_id, replicate, condition)
-            if observed is None:
+            if usage_checkpoint is not None and observed is None:
                 stopped_reason = "session_usage_checkpoint_unavailable"
                 break
-            if not store.record_usage_check(observed_remaining_percent=observed,
+            if usage_checkpoint is not None and not store.record_usage_check(observed_remaining_percent=observed,
                     case_id=case_id, replicate=replicate, condition=condition):
                 stopped_reason = "session_usage_cap_reached"
                 break

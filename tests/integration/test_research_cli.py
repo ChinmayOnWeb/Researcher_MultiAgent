@@ -240,12 +240,13 @@ class ResearchCliIntegrationTests(unittest.TestCase):
         self.assertIn("unknown case IDs", json.loads(result.stderr)["reason"])
         self.assertFalse(output.exists())
 
-    def test_live_evaluation_requires_all_three_explicit_limits(self) -> None:
+    def test_live_evaluation_requires_call_and_wall_limits(self) -> None:
         result = self._run("evaluate", "--cases", str(PROJECT_ROOT / "evals" / "research-quality"),
             "--out-dir", str(self.root / "evaluation"), "--model", "gpt-test", "--effort", "high", "--live", "--json")
         self.assertEqual(result.returncode, 20)
-        self.assertIn("--max-session-usage-percent", json.loads(result.stderr)["reason"])
+        self.assertIn("--max-provider-calls", json.loads(result.stderr)["reason"])
         self.assertFalse((self.root / "evaluation").exists())
+
 
 
 if __name__ == "__main__":

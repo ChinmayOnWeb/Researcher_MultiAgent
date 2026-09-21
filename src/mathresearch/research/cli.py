@@ -70,8 +70,8 @@ def _parser() -> argparse.ArgumentParser:
     evaluate = commands.add_parser("evaluate", help="prepare or inspect a paired quality evaluation")
     evaluate.add_argument("--cases", required=True, type=Path)
     evaluate.add_argument("--out-dir", required=True, type=Path)
-    evaluate.add_argument("--model", required=True)
-    evaluate.add_argument("--effort", choices=("high", "medium"), required=True,
+    evaluate.add_argument("--model", default="gpt-5.6-terra")
+    evaluate.add_argument("--effort", choices=("high", "medium"), default="medium",
                           help="reasoning effort selected on the effort control; frozen per comparison")
     evaluate.add_argument("--case-id", action="append",
                           help="restrict this evaluation to a named case; repeat for a bounded smoke set")
@@ -88,14 +88,12 @@ def _parser() -> argparse.ArgumentParser:
 
 def _evaluate(arguments: argparse.Namespace) -> int:
     if arguments.live:
-        if (arguments.max_provider_calls is None or arguments.max_wall_seconds is None or
-                arguments.max_session_usage_percent is None):
-            return _invalid("live evaluation requires explicit --max-provider-calls, --max-wall-seconds, and --max-session-usage-percent limits",
+        if arguments.max_provider_calls is None or arguments.max_wall_seconds is None:
+            return _invalid("live evaluation requires explicit --max-provider-calls and --max-wall-seconds limits",
                             json_output=arguments.json_output)
         if (arguments.max_provider_calls > 240 or arguments.max_wall_seconds > 7200 or
-                arguments.max_session_usage_percent > 10 or arguments.max_provider_calls < 1 or
-                arguments.max_wall_seconds < 1 or arguments.max_session_usage_percent <= 0):
-            return _invalid("live caps cannot exceed Astra's 240 calls, 7200 seconds, and 10 percentage-point session usage allowance",
+                arguments.max_provider_calls < 1 or arguments.max_wall_seconds < 1):
+            return _invalid("live caps cannot exceed Astra's 240 calls and 7200 seconds",
                             json_output=arguments.json_output)
     try:
         all_cases, cases_hash, rubric_hash = load_cases(arguments.cases)
@@ -118,7 +116,7 @@ def _evaluate(arguments: argparse.Namespace) -> int:
             model=arguments.model, effort=arguments.effort, git_sha=git_sha,
             max_provider_calls=arguments.max_provider_calls if arguments.live else 240,
             max_wall_seconds=arguments.max_wall_seconds if arguments.live else 7200,
-            max_session_usage_delta_percent=arguments.max_session_usage_percent if arguments.live else 10,
+            max_session_usage_delta_percent=arguments.max_session_usage_percent or 10,
             replicates=arguments.replicates)
         store = EvaluationStore(arguments.out_dir, manifest)
         run_result = None
@@ -126,9 +124,7 @@ def _evaluate(arguments: argparse.Namespace) -> int:
             run_result = run_paired_trials(cases, store,
                 trial_runner=lambda case, condition, inputs, trial_dir, timeout:
                     _run_evaluation_trial(case, condition, inputs, trial_dir, timeout, manifest),
-                usage_checkpoint=lambda case_id, replicate, condition:
-                    _prompt_session_usage(case_id, replicate, condition,
-                        manifest["caps"]["max_session_usage_delta_percent"]))
+                usage_checkpoint=None)
         comparison = store.finalize(store.grades(),
             deep_case_ids={case["id"] for case in cases if case["mode"] != "quick"},
             quick_case_ids={case["id"] for case in cases if case["mode"] == "quick"},
@@ -141,7 +137,8 @@ def _evaluate(arguments: argparse.Namespace) -> int:
                "comparison_path": str((arguments.out_dir / "comparison.json").resolve()),
                "reason": ("live trials stopped: " + str(run_result["stopped_reason"]) if run_result and run_result["stopped_reason"]
                           else "live trial outputs require independent semantic grades" if arguments.live
-                          else "offline evaluation initialized; no provider calls were made")}
+                          else "offline evaluation initialized; no provider calls were made"),
+               "session_usage_monitoring": "disabled_by_user" if arguments.live else "not_applicable"}
     if run_result:
         payload["trial_conditions_recorded"] = len(run_result["trial_conditions_recorded"])
         payload["provider_calls_reserved"] = run_result["provider_calls_reserved"]
