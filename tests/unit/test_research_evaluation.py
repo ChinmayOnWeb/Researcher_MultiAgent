@@ -130,13 +130,18 @@ class ResearchEvaluationTests(unittest.TestCase):
                 rubric_hash="b" * 64, model="gpt-test", effort="high", git_sha="abc",
                 max_provider_calls=6, max_wall_seconds=7200)
             store = EvaluationStore(root, manifest)
+            usage_readings = iter((55.0, 45.0))
             launched: list[str] = []
             result = run_paired_trials([case], store,
-                trial_runner=lambda *args: launched.append("launched"),
-                usage_checkpoint=lambda *args: 10.0)
+                trial_runner=lambda *args: launched.append("launched") or {
+                    "status": "complete", "provider_calls": 1, "report": "fixture"},
+                usage_checkpoint=lambda *args: next(usage_readings))
             self.assertEqual(result["stopped_reason"], "session_usage_cap_reached")
-            self.assertEqual(launched, [])
-            self.assertFalse(store.trial_records())
+            self.assertEqual(launched, ["launched"])
+            self.assertEqual(len(store.trial_records()), 1)
+            checks = json.loads((root / "usage-checks.json").read_text(encoding="utf-8"))
+            self.assertEqual(checks[0]["baseline_remaining_percent"], 55.0)
+            self.assertEqual(checks[1]["quota_drop_percentage_points"], 10.0)
 
     def test_concurrent_paired_runner_is_rejected_before_provider_trial(self) -> None:
         cases, _, _ = load_cases(CASES)

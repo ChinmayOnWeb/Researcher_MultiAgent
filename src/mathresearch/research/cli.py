@@ -76,7 +76,8 @@ def _parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--live", action="store_true", help="request provider-backed trials")
     evaluate.add_argument("--max-provider-calls", type=int)
     evaluate.add_argument("--max-wall-seconds", type=int)
-    evaluate.add_argument("--max-session-usage-percent", type=float)
+    evaluate.add_argument("--max-session-usage-percent", type=float,
+                          help="maximum percentage-point drop in the 5-hour quota remaining, from the saved start reading")
     evaluate.add_argument("--json", action="store_true", dest="json_output")
     return parser
 
@@ -90,7 +91,7 @@ def _evaluate(arguments: argparse.Namespace) -> int:
         if (arguments.max_provider_calls > 240 or arguments.max_wall_seconds > 7200 or
                 arguments.max_session_usage_percent > 10 or arguments.max_provider_calls < 1 or
                 arguments.max_wall_seconds < 1 or arguments.max_session_usage_percent <= 0):
-            return _invalid("live caps cannot exceed Astra's 240 calls, 7200 seconds, and 10% session usage recommendation",
+            return _invalid("live caps cannot exceed Astra's 240 calls, 7200 seconds, and 10 percentage-point session usage allowance",
                             json_output=arguments.json_output)
     try:
         cases, cases_hash, rubric_hash = load_cases(arguments.cases)
@@ -101,7 +102,7 @@ def _evaluate(arguments: argparse.Namespace) -> int:
             model=arguments.model, effort=arguments.effort, git_sha=git_sha,
             max_provider_calls=arguments.max_provider_calls if arguments.live else 240,
             max_wall_seconds=arguments.max_wall_seconds if arguments.live else 7200,
-            max_session_usage_percent=arguments.max_session_usage_percent if arguments.live else 10)
+            max_session_usage_delta_percent=arguments.max_session_usage_percent if arguments.live else 10)
         store = EvaluationStore(arguments.out_dir, manifest)
         run_result = None
         if arguments.live:
@@ -110,7 +111,7 @@ def _evaluate(arguments: argparse.Namespace) -> int:
                     _run_evaluation_trial(case, condition, inputs, trial_dir, timeout, manifest),
                 usage_checkpoint=lambda case_id, replicate, condition:
                     _prompt_session_usage(case_id, replicate, condition,
-                        manifest["caps"]["max_session_usage_percent"]))
+                        manifest["caps"]["max_session_usage_delta_percent"]))
         comparison = store.finalize(store.grades(),
             deep_case_ids={case["id"] for case in cases if case["mode"] != "quick"},
             quick_case_ids={case["id"] for case in cases if case["mode"] == "quick"})
@@ -133,8 +134,9 @@ def _evaluate(arguments: argparse.Namespace) -> int:
 
 def _prompt_session_usage(case_id: str, replicate: int, condition: str,
                           maximum: float = 10.0) -> float | None:
-    print(f"Current Codex session usage percentage before {case_id}/{replicate}/{condition}? "
-          f"Enter a number below {maximum:g} to continue, or {maximum:g}+ to stop.",
+    print(f"Current 5-hour Codex quota remaining percentage before {case_id}/{replicate}/{condition}? "
+          f"Enter the remaining percentage (0-100). The evaluator stops after a {maximum:g}-point drop "
+          "from its saved starting reading.",
           file=sys.stderr, flush=True)
     try:
         raw = input().strip()

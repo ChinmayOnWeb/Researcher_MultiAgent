@@ -120,7 +120,7 @@ def worker_case(case: Mapping[str, Any], *, source_inputs: Sequence[Mapping[str,
 def make_manifest(*, cases: Sequence[Mapping[str, Any]], cases_hash: str,
                   rubric_hash: str, model: str, effort: str, git_sha: str,
                   max_provider_calls: int, max_wall_seconds: int,
-                  max_session_usage_percent: float = 10.0,
+                  max_session_usage_delta_percent: float = 10.0,
                   replicates: int = 3) -> dict[str, Any]:
     """Create immutable comparison identity including deterministic paired ordering."""
     if not model or effort not in {"medium", "high"}:
@@ -131,11 +131,11 @@ def make_manifest(*, cases: Sequence[Mapping[str, Any]], cases_hash: str,
         raise ValidationError("max_provider_calls", "must be a positive integer")
     if isinstance(max_wall_seconds, bool) or not isinstance(max_wall_seconds, int) or max_wall_seconds < 1:
         raise ValidationError("max_wall_seconds", "must be a positive integer")
-    if (isinstance(max_session_usage_percent, bool) or
-            not isinstance(max_session_usage_percent, (int, float)) or
-            not math.isfinite(max_session_usage_percent) or
-            not 0 < max_session_usage_percent <= 100):
-        raise ValidationError("max_session_usage_percent", "must be a percentage in (0,100]")
+    if (isinstance(max_session_usage_delta_percent, bool) or
+            not isinstance(max_session_usage_delta_percent, (int, float)) or
+            not math.isfinite(max_session_usage_delta_percent) or
+            not 0 < max_session_usage_delta_percent <= 10):
+        raise ValidationError("max_session_usage_delta_percent", "must be a percentage-point allowance in (0,10]")
     if len(cases) * replicates * 2 > max_provider_calls:
         raise ValidationError("max_provider_calls", "cannot fit all paired trials")
     order = []
@@ -149,7 +149,7 @@ def make_manifest(*, cases: Sequence[Mapping[str, Any]], cases_hash: str,
             "cases_hash": cases_hash, "rubric_hash": rubric_hash, "case_ids": [case["id"] for case in cases],
             "model": model, "effort": effort, "git_sha": git_sha,
             "caps": {"max_provider_calls": max_provider_calls, "max_wall_seconds": max_wall_seconds,
-                     "max_session_usage_percent": float(max_session_usage_percent)},
+                     "max_session_usage_delta_percent": float(max_session_usage_delta_percent)},
             "replicates": replicates, "ordering": order}
 
 
@@ -208,20 +208,32 @@ class EvaluationStore:
         ledger["wall_seconds_observed"] += float(elapsed_seconds)
         write_json(path, ledger)
 
-    def record_usage_check(self, *, observed_percent: float, case_id: str,
+    def record_usage_check(self, *, observed_remaining_percent: float, case_id: str,
                            replicate: int, condition: str) -> bool:
-        """Persist the operator's usage reading and stop when it reaches the cap."""
-        if (isinstance(observed_percent, bool) or not isinstance(observed_percent, (int, float)) or
-                not math.isfinite(observed_percent) or not 0 <= observed_percent <= 100):
-            raise ValidationError("session_usage", "must be a percentage from zero through 100")
+        """Persist 5-hour quota readings and enforce the allowance from its saved baseline."""
+        if (isinstance(observed_remaining_percent, bool) or
+                not isinstance(observed_remaining_percent, (int, float)) or
+                not math.isfinite(observed_remaining_percent) or
+                not 0 <= observed_remaining_percent <= 100):
+            raise ValidationError("session_usage", "remaining quota must be a percentage from zero through 100")
         path = self.directory / "usage-checks.json"
         checks = _read_json(path) if path.exists() else []
+        if checks:
+            baseline = checks[0].get("baseline_remaining_percent",
+                                     checks[0].get("observed_remaining_percent"))
+            if baseline is None:
+                raise ValidationError("session_usage", "existing readings lack a resumable 5-hour quota baseline")
+        else:
+            baseline = float(observed_remaining_percent)
+        quota_drop = float(baseline) - float(observed_remaining_percent)
         checks.append({"case_id": case_id, "replicate": replicate, "condition": condition,
-                       "observed_percent": float(observed_percent),
+                       "observed_remaining_percent": float(observed_remaining_percent),
+                       "baseline_remaining_percent": float(baseline),
+                       "quota_drop_percentage_points": quota_drop,
                        "recorded_at_utc": datetime.now(timezone.utc).isoformat()})
         write_json(path, checks)
-        cap = _read_json(self.directory / "manifest.json")["caps"]["max_session_usage_percent"]
-        return observed_percent < cap
+        allowance = _read_json(self.directory / "manifest.json")["caps"]["max_session_usage_delta_percent"]
+        return quota_drop < allowance
 
     def _trial_path(self, case_id: str, replicate: int, condition: str) -> Path:
         if condition not in CONDITIONS or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", case_id):
@@ -589,7 +601,7 @@ def _run_paired_trials_locked(cases: Sequence[Mapping[str, Any]], store: Evaluat
             if observed is None:
                 stopped_reason = "session_usage_checkpoint_unavailable"
                 break
-            if not store.record_usage_check(observed_percent=observed,
+            if not store.record_usage_check(observed_remaining_percent=observed,
                     case_id=case_id, replicate=replicate, condition=condition):
                 stopped_reason = "session_usage_cap_reached"
                 break
