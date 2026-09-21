@@ -210,19 +210,23 @@ class ResearchEngineTests(unittest.TestCase):
             self.assertEqual(stages.count("revise:"), 1)
             self.assertEqual(stages.count("audit:"), 2)
 
-    def test_crash_after_final_event_returns_same_terminal_projection_without_calls(self) -> None:
+    def test_final_event_before_projection_recovers_terminal_projection_without_calls(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); run_dir = self._run(root)
             stages: list[str] = []; factory, _, _ = self._factory(root, stages)
             def crash(phase: str, snapshot: Any) -> None:
-                if phase == "after_final_event": raise RuntimeError("stop after final event")
-            with self.assertRaisesRegex(RuntimeError, "stop after final event"):
+                if phase == "after_final_event_persisted_before_projection":
+                    self.assertTrue((run_dir / "events" / f"{snapshot.sequence:06d}.json").exists())
+                    self.assertFalse((run_dir / "report.md").exists())
+                    self.assertFalse((run_dir / "research-log.md").exists())
+                    raise RuntimeError("stop after final event persistence")
+            with self.assertRaisesRegex(RuntimeError, "stop after final event persistence"):
                 run_research(run_dir, provider_factory=factory, fault_hook=crash)
-            report = (run_dir / "report.md").read_bytes()
-            resumed = run_research(run_dir, provider_factory=lambda request: self.fail("terminal resume resolved provider"))
+            resumed = run_research(run_dir, provider_factory=lambda request, *, recorded_config: self.fail("terminal resume resolved provider"))
 
             self.assertEqual(resumed.status, "complete")
-            self.assertEqual((run_dir / "report.md").read_bytes(), report)
+            self.assertEqual((run_dir / "report.md").read_text(encoding="utf-8"), render_report(resumed))
+            self.assertEqual((run_dir / "research-log.md").read_text(encoding="utf-8"), render_log(resumed))
             self.assertEqual(len(stages), 5)
 
     def test_deadline_uses_persisted_initialization_without_resolving_provider(self) -> None:
@@ -235,6 +239,24 @@ class ResearchEngineTests(unittest.TestCase):
                                   now=lambda: future)
             self.assertEqual(result.status, "budget_exhausted")
             self.assertEqual(result.reason, "deadline_before_launch")
+
+    def test_deadline_rechecked_after_intent_prevents_child_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); run_dir = self._run(root)
+            state = load_research_status(run_dir)
+            start = datetime.fromisoformat(state.initialized_at.replace("Z", "+00:00"))
+            clock = {"value": start + timedelta(seconds=1)}
+            stages: list[str] = []; factory, _, _ = self._factory(root, stages)
+
+            def advance_after_intent(phase: str, snapshot: Any) -> None:
+                if phase == "after_intent":
+                    clock["value"] = start + timedelta(seconds=snapshot.request.budgets["max_wall_seconds"] + 1)
+
+            result = run_research(run_dir, provider_factory=factory,
+                                  now=lambda: clock["value"], fault_hook=advance_after_intent)
+            self.assertEqual((result.status, result.reason), ("budget_exhausted", "deadline_before_launch"))
+            self.assertEqual(stages, [])
+            self.assertEqual(result.outcomes["a0001"]["outcome"], "launch_failed")
 
     def test_gate_answer_is_idempotent_and_conflicting_duplicate_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

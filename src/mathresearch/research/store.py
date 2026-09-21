@@ -8,7 +8,7 @@ import os
 import stat
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from mathresearch.errors import RunCorruptError, RunNotFoundError, RunStoreError, RunUninitializedError
 from mathresearch.locking import acquire_run_lock
@@ -137,14 +137,18 @@ class LockedResearchRun:
     def snapshot(self) -> ResearchSnapshot: return self._snapshot
     @property
     def events(self) -> tuple[ResearchEvent, ...]: return self._events
-    def append(self, event: ResearchEvent) -> ResearchSnapshot:
+    def append(self, event: ResearchEvent, *,
+               after_event_persisted: Callable[[ResearchSnapshot], None] | None = None) -> ResearchSnapshot:
         candidate = self._events + (event,)
         try: snapshot = replay_research_events(candidate)
         except ValueError as exc: raise RunStoreError("invalid research event append") from exc
         target = self.run_dir / "events" / f"{event.sequence:06d}.json"
         if target.exists(): raise RunCorruptError(self.run_dir, "immutable event already exists")
         _atomic_write_new(target, canonical_json_bytes(event.to_json()))
-        self._events, self._snapshot = candidate, snapshot; _materialize(self.run_dir, snapshot, candidate)
+        self._events, self._snapshot = candidate, snapshot
+        if after_event_persisted is not None:
+            after_event_persisted(snapshot)
+        _materialize(self.run_dir, snapshot, candidate)
         return snapshot
     def write_capture(self, action_id: str, name: str, data: bytes) -> str:
         if name not in {"stdout.bin", "stderr.log"} or action_id not in self._snapshot.actions: raise RunStoreError("unsafe capture target")

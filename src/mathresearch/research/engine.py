@@ -49,11 +49,12 @@ def _remaining(snapshot: ResearchSnapshot, now: Now) -> int:
 
 
 def _event(run: LockedResearchRun, kind: str, body: Mapping[str, Any], now: Now,
-           *, occurred_at: str | None = None) -> ResearchSnapshot:
+           *, occurred_at: str | None = None,
+           after_event_persisted: Callable[[ResearchSnapshot], None] | None = None) -> ResearchSnapshot:
     item = ResearchEvent.from_json({"schema_version": 3, "record_type": "research_event",
         "sequence": run.snapshot.sequence + 1, "event_type": kind,
         "run_id": run.snapshot.request.run_id, "occurred_at": occurred_at or _utc(now), "body": dict(body)})
-    return run.append(item)
+    return run.append(item, after_event_persisted=after_event_persisted)
 
 
 def _decision_body(decision: Decision) -> dict[str, Any]:
@@ -102,7 +103,9 @@ def _finalize(run: LockedResearchRun, decision: Decision, status: str,
         "final_assessment": assessment, "reason": reason, "finished_at": finished_at}))
     body = {"status": status, "assessment": assessment, "reason": reason,
             "report_markdown": render_report(prospective), "log_markdown": render_log(prospective)}
-    snapshot = _event(run, "research_finished", body, now, occurred_at=finished_at)
+    snapshot = _event(run, "research_finished", body, now, occurred_at=finished_at,
+                      after_event_persisted=(lambda committed: fault_hook(
+                          "after_final_event_persisted_before_projection", committed)) if fault_hook else None)
     if fault_hook: fault_hook("after_final_event", snapshot)
     return snapshot
 
@@ -197,34 +200,33 @@ def _execute_action(run: LockedResearchRun, action: Mapping[str, Any], adapter: 
     snapshot = _event(run, "action_intended", {"action_id": action["id"],
         "packet": dict(packet), "packet_sha256": hashlib.sha256(packet_bytes).hexdigest()}, now)
     if fault_hook: fault_hook("after_intent", snapshot)
-    remaining = min(remaining, snapshot.request.budgets["per_call_seconds"])
-    if remaining <= 0:
-        decision = _finish_decision(snapshot, "budget_exhausted", "budget_exhausted",
-                                    _assessment_for_stop(snapshot, "deadline_before_launch"))
-        return _finalize(run, decision, "budget_exhausted", "deadline_before_launch", now, fault_hook)
-
+    remaining = min(_remaining(snapshot, now), snapshot.request.budgets["per_call_seconds"])
     before = monotonic()
-    try:
-        with tempfile.TemporaryDirectory(prefix="research-action-", dir=str(scratch_parent)) as scratch_name:
-            scratch = Path(scratch_name)
-            if action["kind"] == "worker":
-                if adapter is None: raise ValueError("worker launch requires a configured provider")
-                prompt = build_prompt(action["role"], packet)
-                output = execute_worker(adapter, WorkerInput(
-                    stage=f"{action['role']}:{action.get('branch') or ''}", prompt=prompt,
-                    output_schema=packet["output_schema"]), scratch=scratch,
-                    timeout_seconds=remaining)
-                observed = parse_provider_observation(output.stderr)
-                mismatch = check_provider_observation(snapshot.request, observed)
-                if mismatch is not None:
-                    output = WorkerOutput("protocol_error", output.exit_code, output.stdout,
-                        output.stderr, None, mismatch)
-            else:
-                output, _ = _tool_result(snapshot, action, scratch, remaining)
-                observed = {"model": None, "effort": None}
-    except (OSError, ValueError, TypeError, ValidationError) as exc:
-        output = WorkerOutput("protocol_error", None, b"", b"", None, str(exc)[:4000])
+    if remaining <= 0:
+        output = WorkerOutput("launch_failed", None, b"", b"", None, "deadline_before_launch")
         observed = {"model": None, "effort": None}
+    else:
+        try:
+            with tempfile.TemporaryDirectory(prefix="research-action-", dir=str(scratch_parent)) as scratch_name:
+                scratch = Path(scratch_name)
+                if action["kind"] == "worker":
+                    if adapter is None: raise ValueError("worker launch requires a configured provider")
+                    prompt = build_prompt(action["role"], packet)
+                    output = execute_worker(adapter, WorkerInput(
+                        stage=f"{action['role']}:{action.get('branch') or ''}", prompt=prompt,
+                        output_schema=packet["output_schema"]), scratch=scratch,
+                        timeout_seconds=remaining)
+                    observed = parse_provider_observation(output.stderr)
+                    mismatch = check_provider_observation(snapshot.request, observed)
+                    if mismatch is not None:
+                        output = WorkerOutput("protocol_error", output.exit_code, output.stdout,
+                            output.stderr, None, mismatch)
+                else:
+                    output, _ = _tool_result(snapshot, action, scratch, remaining)
+                    observed = {"model": None, "effort": None}
+        except (OSError, ValueError, TypeError, ValidationError) as exc:
+            output = WorkerOutput("protocol_error", None, b"", b"", None, str(exc)[:4000])
+            observed = {"model": None, "effort": None}
     duration_ms = int((monotonic() - before) * 1000)
     stdout_digest = run.write_capture(action["id"], "stdout.bin", output.stdout)
     if fault_hook: fault_hook("after_stdout_capture", run.snapshot)
@@ -323,7 +325,8 @@ def run_research(run_dir: Path, *, provider_factory: ProviderFactory | None = No
             finished = _execute_action(run, action, adapter, packet, scratch_parent, remaining,
                                        now, monotonic, fault_hook)
             if _remaining(finished, now) <= 0 and finished.status not in {"complete", "incomplete", "blocked", "budget_exhausted"}:
-                reason = "deadline_after_action"
+                outcome = finished.outcomes.get(action["id"], {})
+                reason = "deadline_before_launch" if outcome.get("error") == "deadline_before_launch" else "deadline_after_action"
                 expired = _finish_decision(finished, "budget_exhausted", "budget_exhausted",
                     _assessment_for_stop(finished, reason))
                 return _finalize(run, expired, "budget_exhausted", reason, now, fault_hook)
