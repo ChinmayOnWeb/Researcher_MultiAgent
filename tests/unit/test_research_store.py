@@ -11,7 +11,7 @@ from unittest.mock import patch
 from mathresearch.research.events import ResearchEvent, canonical_json_bytes
 from mathresearch.research.store import initialize_research, load_research_status, open_research_run
 from mathresearch.run_store import load_run_status
-from tests.unit.test_research_events import ACTION, DETAILS, PACKET, TELEMETRY
+from tests.unit.test_research_events import ACTION, DETAILS, PACKET, TELEMETRY, provider_config
 from tests.unit.test_research_contracts import valid_request_payload
 
 
@@ -38,7 +38,7 @@ class ResearchStoreTests(unittest.TestCase):
         return self._event(2, "decision_recorded", {"decision_id": "d0001", "kind": "worker", "reason_code": "frame_request", "action": ACTION, "details": DETAILS})
 
     def _intent(self) -> ResearchEvent:
-        return self._event(3, "action_intended", {"action_id": "a0001", "packet": PACKET, "packet_sha256": __import__("hashlib").sha256(canonical_json_bytes(PACKET)).hexdigest()})
+        return self._event(4, "action_intended", {"action_id": "a0001", "packet": PACKET, "packet_sha256": __import__("hashlib").sha256(canonical_json_bytes(PACKET)).hexdigest()})
 
     def test_v3_fault_matrix_preserves_committed_boundaries(self) -> None:
         """Every injected publication failure leaves only durable evidence recoverable once."""
@@ -53,7 +53,9 @@ class ResearchStoreTests(unittest.TestCase):
 
             # Intent projection: event commit survives packet materialization failure and recovers once.
             run = self._new_run(root / "intent")
-            with open_research_run(run) as locked: locked.append(self._decision())
+            with open_research_run(run) as locked:
+                locked.append(self._decision())
+                locked.append(self._event(3, "provider_configured", provider_config()))
             from mathresearch.research import store as store_module
             original_new = store_module._atomic_write_new
             def fail_packet(target: Path, data: bytes) -> None:
@@ -62,8 +64,8 @@ class ResearchStoreTests(unittest.TestCase):
             with patch("mathresearch.research.store._atomic_write_new", side_effect=fail_packet):
                 with self.assertRaises(Exception):
                     with open_research_run(run) as locked: locked.append(self._intent())
-            self.assertTrue((run / "events" / "000003.json").exists()); load_research_status(run)
-            self.assertEqual(len(list((run / "events").glob("*.json"))), 3)
+            self.assertTrue((run / "events" / "000004.json").exists()); load_research_status(run)
+            self.assertEqual(len(list((run / "events").glob("*.json"))), 4)
 
             # First/second capture failures never invent a capture; completed intent remains unique.
             with patch("mathresearch.research.store._atomic_write_new", side_effect=OSError("first")):
@@ -78,11 +80,11 @@ class ResearchStoreTests(unittest.TestCase):
 
             # Action-finish commit failure leaves no finish event; gate-response commit failure likewise.
             stdout = __import__("hashlib").sha256(b"out").hexdigest(); stderr = __import__("hashlib").sha256(b"err").hexdigest()
-            finish = self._event(4, "action_finished", {"action_id": "a0001", "outcome": "succeeded", "exit_code": 0, "stdout_sha256": stdout, "stderr_sha256": stderr, "result": {"task_type": "exploration", "deliverables": ["d"], "subquestions": ["q"], "missing_inputs": [], "proposed_checks": [], "source_needs": []}, "error": None, "telemetry": TELEMETRY})
+            finish = self._event(5, "action_finished", {"action_id": "a0001", "outcome": "succeeded", "exit_code": 0, "stdout_sha256": stdout, "stderr_sha256": stderr, "result": {"task_type": "exploration", "deliverables": ["d"], "subquestions": ["q"], "missing_inputs": [], "proposed_checks": [], "source_needs": []}, "error": None, "telemetry": TELEMETRY})
             with patch("mathresearch.research.store._atomic_write_new", side_effect=OSError("finish")):
                 with self.assertRaises(Exception):
                     with open_research_run(run) as locked: locked.append(finish)
-            self.assertFalse((run / "events" / "000004.json").exists())
+            self.assertFalse((run / "events" / "000005.json").exists())
 
             run = self._new_run(root / "gate")
             gate = self._event(2, "gate_opened", {"gate_id": "g0001", "kind": "missing_inputs", "questions": ["q"], "allowed_response": ["supply"], "resume_token": "0" * 64})
@@ -201,10 +203,11 @@ class ResearchStoreTests(unittest.TestCase):
             with open_research_run(run) as locked:
                 base = {"schema_version": 3, "record_type": "research_event", "run_id": "odd-perfect-run", "occurred_at": "2099-09-16T00:00:02Z"}
                 locked.append(ResearchEvent.from_json(base | {"sequence": 2, "event_type": "decision_recorded", "body": {"decision_id": "d0001", "kind": "worker", "reason_code": "frame_request", "action": ACTION, "details": DETAILS}}))
+                locked.append(ResearchEvent.from_json(base | {"sequence": 3, "event_type": "provider_configured", "body": provider_config()}))
                 packet = canonical_json_bytes(PACKET)
-                locked.append(ResearchEvent.from_json(base | {"sequence": 3, "event_type": "action_intended", "body": {"action_id": "a0001", "packet": PACKET, "packet_sha256": __import__("hashlib").sha256(packet).hexdigest()}}))
+                locked.append(ResearchEvent.from_json(base | {"sequence": 4, "event_type": "action_intended", "body": {"action_id": "a0001", "packet": PACKET, "packet_sha256": __import__("hashlib").sha256(packet).hexdigest()}}))
                 stdout = locked.write_capture("a0001", "stdout.bin", b"out"); stderr = locked.write_capture("a0001", "stderr.log", b"err")
-                locked.append(ResearchEvent.from_json(base | {"sequence": 4, "event_type": "action_finished", "body": {"action_id": "a0001", "outcome": "succeeded", "exit_code": 0, "stdout_sha256": stdout, "stderr_sha256": stderr, "result": {"task_type": "exploration", "deliverables": ["d"], "subquestions": ["q"], "missing_inputs": [], "proposed_checks": [], "source_needs": []}, "error": None, "telemetry": TELEMETRY}}))
+                locked.append(ResearchEvent.from_json(base | {"sequence": 5, "event_type": "action_finished", "body": {"action_id": "a0001", "outcome": "succeeded", "exit_code": 0, "stdout_sha256": stdout, "stderr_sha256": stderr, "result": {"task_type": "exploration", "deliverables": ["d"], "subquestions": ["q"], "missing_inputs": [], "proposed_checks": [], "source_needs": []}, "error": None, "telemetry": TELEMETRY}}))
             shutil.rmtree(run / "actions" / "a0001")
             (run / "state.json").unlink()
             with self.assertRaises(RuntimeError): load_research_status(run)

@@ -7,8 +7,7 @@ import json
 from typing import Any, Mapping
 
 from mathresearch.research.events import ResearchSnapshot
-from mathresearch.research.provenance import assess
-from mathresearch.research.routing import _question_status
+from mathresearch.research.routing import _question_status, assess_latest
 
 
 def _fence(text: str) -> str:
@@ -60,12 +59,7 @@ def _assessment(snapshot: ResearchSnapshot, draft: Mapping[str, Any] | None,
                 "semantic_status": "not_audited", "computation_status": "performed" if performed else "not_performed",
                 "formal_status": "not_performed", "claim_findings": [],
                 "unresolved": [snapshot.reason or "no_draft"]}
-    audit = None
-    if snapshot.latest_audit_id in snapshot.results:
-        action = snapshot.actions.get(snapshot.latest_audit_id, {})
-        if draft_id in action.get("dependencies", []): audit = snapshot.results[snapshot.latest_audit_id]
-    return assess(draft, snapshot.sources, snapshot.tool_results, audit=audit,
-                  objective=snapshot.request.objective)
+    return assess_latest(snapshot)
 
 
 def render_report(snapshot: ResearchSnapshot) -> str:

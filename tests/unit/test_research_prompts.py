@@ -11,7 +11,7 @@ from types import MappingProxyType
 from mathresearch.contracts.research_request import ResearchRequest
 from mathresearch.contracts.validation import ValidationError
 from mathresearch.research.contracts import result_schema
-from mathresearch.research.events import ResearchSnapshot
+from mathresearch.research.events import ResearchSnapshot, canonical_json_bytes
 from mathresearch.research.prompts import PROMPT_VERSION, build_packet, build_prompt
 from tests.unit.test_research_contracts import valid_request_payload
 
@@ -44,6 +44,8 @@ def snapshot(*, max_input_bytes: int = 131072) -> ResearchSnapshot:
         pending_action_id=None, pending_gate=None, model_calls_used=0, tool_calls_used=0,
         branches_started=0, repairs_started=0, latest_draft_id="draft-one", latest_audit_id="audit-one",
         final_assessment=None, reason=None,
+        intent_packets=MappingProxyType({key: canonical_json_bytes({"sources": {"source-one": source_record()},
+            "tool_results": {"check-one": tool_receipt()}}) for key in prior_actions}),
     )
 
 

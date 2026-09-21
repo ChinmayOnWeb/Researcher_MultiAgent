@@ -19,6 +19,7 @@ from .errors import ExitCode, InvalidInvocationError, RunStoreError
 from .process_runner import ProcessRunnerError
 from .quick_workflow import run_quick
 from .run_store import initialize_run, load_run_status, open_locked_run
+from .research.cli import add_research_command, main as research_main
 
 
 INVALID_INVOCATION_MESSAGE = (
@@ -156,6 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--json", action="store_true", dest="json_output", help="emit JSON"
     )
+    add_research_command(commands)
     return parser
 
 
@@ -172,6 +174,9 @@ def _positive_timeout_seconds(value: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """Run the CLI and return a process exit code."""
+    command_line = sys.argv[1:] if argv is None else argv
+    if command_line[:2] == ["research", "--help"]:
+        return research_main(["--help"])
     parser = build_parser()
     try:
         arguments = parser.parse_args(argv)
@@ -195,6 +200,8 @@ def main(argv: list[str] | None = None) -> int:
                 availability = "available" if adapter["available"] else "unavailable"
                 print(f"{adapter['id']}: {availability}")
         return int(ExitCode.SUCCESS)
+    if arguments.command == "research":
+        return research_main(arguments.research_args)
 
     try:
         if arguments.command == "init":

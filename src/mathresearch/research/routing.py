@@ -43,8 +43,27 @@ def assess_latest(snapshot: ResearchSnapshot) -> dict[str, Any]:
     draft_action, draft = selected
     audit_pair = _latest(snapshot, "audit")
     audit = None
-    if audit_pair and draft_action["id"] in audit_pair[0].get("dependencies", []): audit = audit_pair[1]
-    return assess(draft, snapshot.sources, snapshot.tool_results, audit=audit,
+    audit_sources: Mapping[str, Any] | None = None
+    audit_tool_results: Mapping[str, Any] | None = None
+    if audit_pair and draft_action["id"] in audit_pair[0].get("dependencies", []):
+        audit = audit_pair[1]
+        try:
+            audit_packet = json.loads(snapshot.intent_packets[audit_pair[0]["id"]])
+            audit_sources = audit_packet["sources"]
+            audit_tool_results = audit_packet["tool_results"]
+        except (KeyError, TypeError, ValueError):
+            audit_sources = {}
+            audit_tool_results = {}
+    try:
+        draft_packet = json.loads(snapshot.intent_packets[draft_action["id"]])
+        visible_sources = draft_packet["sources"]
+        visible_tool_results = draft_packet["tool_results"]
+    except (KeyError, TypeError, ValueError):
+        visible_sources = {}
+        visible_tool_results = {}
+    return assess(draft, visible_sources, visible_tool_results, audit=audit,
+                  audit_sources=audit_sources, audit_tool_results=audit_tool_results,
+                  run_tool_results=snapshot.tool_results,
                   objective=snapshot.request.objective)
 
 
@@ -142,7 +161,15 @@ def _next_decision(snapshot: ResearchSnapshot) -> Decision:
     if snapshot.status in TERMINAL:
         return Decision("noop", "terminal_noop", details=details, assessment=snapshot.final_assessment)
     if snapshot.pending_action_id:
-        return _finish(snapshot, "ambiguous_execution", "blocked", blockers=["pending action has unknown completion"])
+        if snapshot.pending_action_id in snapshot.intended_action_ids:
+            return _finish(snapshot, "ambiguous_execution", "blocked", blockers=["pending action has unknown completion"])
+        action = snapshot.actions.get(snapshot.pending_action_id)
+        previous = next((item for item in reversed(snapshot.decisions)
+                         if item.get("action", {}).get("id") == snapshot.pending_action_id), None)
+        if action is not None and previous is not None:
+            return Decision("resume", previous["reason_code"], action,
+                            previous["details"], decision_id=previous["decision_id"])
+        return _finish(snapshot, "ambiguous_execution", "blocked", blockers=["pending decision lacks a recoverable action"])
     if snapshot.pending_gate:
         return Decision("await", "human_input_needed", details=details, gate=snapshot.pending_gate)
     if any(action_id not in snapshot.results and action_id != snapshot.pending_action_id
@@ -288,4 +315,5 @@ def _next_decision(snapshot: ResearchSnapshot) -> Decision:
 
 def next_decision(snapshot: ResearchSnapshot) -> Decision:
     """Return a stable, monotonically identified decision without side effects."""
-    return replace(_next_decision(snapshot), decision_id=_decision_id(snapshot))
+    decision = _next_decision(snapshot)
+    return decision if decision.decision_id is not None else replace(decision, decision_id=_decision_id(snapshot))

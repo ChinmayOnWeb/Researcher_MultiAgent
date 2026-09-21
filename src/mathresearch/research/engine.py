@@ -353,4 +353,9 @@ def answer_research_gate(run_dir: Path, response: Mapping[str, Any], *,
             raise ValueError("no matching human gate is open")
         snapshot = _event(run, "gate_answered", {"gate_id": gate_id,
             "response_id": response_id, "response": response}, now)
+        if response.get("decision") == "cancel":
+            reason = "user_cancelled"
+            decision = _finish_decision(snapshot, reason, "incomplete",
+                                        _assessment_for_stop(snapshot, reason))
+            return _finalize(run, decision, "incomplete", reason, now, None)
         return snapshot

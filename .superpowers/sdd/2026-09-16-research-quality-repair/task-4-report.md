@@ -58,3 +58,9 @@ Verification: `$env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_pr
 Gate replay no longer bypasses validation when `sources` is omitted: every response must have the complete exact envelope before any decision or text is considered. Packet validation rejects the reproduced `branches=7`, `url=7`, and `operation=7` cases, in addition to nested unknown fields.
 
 Verification: `$env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_prompts tests.unit.test_research_events tests.unit.test_research_store tests.unit.test_research_contracts -v` — 44 passed.
+
+## Fix round 3
+
+Completed the interrupted recursive packet validation. Captured source records now validate exact nested retrieval metadata, UTC dates, content hashes, and text limits. Tool receipts validate operation-specific argument and result shapes, status/result/error consistency, scope limits, and the fixed broker version. Dependency packets validate Drafts for every producer role and verify revise Audit references against its Draft. Branch planning inputs must be arrays of strings.
+
+Verification: `$env:PYTHONPATH='src'; py -m unittest tests.unit.test_research_prompts tests.unit.test_research_events tests.unit.test_research_store tests.unit.test_research_contracts -q` — exit 0, 47 tests.

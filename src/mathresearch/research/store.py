@@ -66,6 +66,11 @@ def _checked_children(directory: Path, run_dir: Path, *, files: set[str], direct
 def _check_layout(run_dir: Path, snapshot: ResearchSnapshot, events: tuple[ResearchEvent, ...]) -> None:
     allowed = {".run.lock", "request.json", "state.json", "events", "actions", "sources", "tools", "report.md", "research-log.md"}
     root = _checked_children(run_dir, run_dir, files={".run.lock", "request.json", "state.json", "report.md", "research-log.md"}, directories={"events", "actions", "sources", "tools"}, immutable={"request.json"})
+    request_path = run_dir / "request.json"
+    if "request.json" not in root:
+        raise RunCorruptError(run_dir, "request projection is missing")
+    if request_path.read_bytes() != canonical_json_bytes(events[0].body["request"]):
+        raise RunCorruptError(run_dir, "request projection mismatch")
     for name in ("actions", "sources", "tools"):
         path = run_dir / name
         if path.exists(): _safe_directory(path, run_dir)

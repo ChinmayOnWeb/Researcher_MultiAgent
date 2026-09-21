@@ -6,8 +6,8 @@ import copy
 import hashlib
 import unittest
 
-from mathresearch.research.events import ResearchEvent, replay_research_events
-from tests.unit.test_research_contracts import valid_request_payload
+from mathresearch.research.events import ResearchEvent, canonical_json_bytes, replay_research_events
+from tests.unit.test_research_contracts import valid_draft, valid_request_payload
 
 
 def event(sequence: int, kind: str, body: dict[str, object]) -> dict[str, object]:
@@ -25,6 +25,14 @@ SHA = hashlib.sha256(b'{"opaque":["packet"],"version":3}').hexdigest()
 TELEMETRY = {"duration_ms": 1, "input_bytes": 1, "output_bytes": 1, "model_observed": None,
              "effort_observed": None, "input_tokens": None, "output_tokens": None,
              "reasoning_tokens": None, "cost_usd": None}
+
+
+def provider_config() -> dict[str, object]:
+    request = valid_request_payload()
+    return {"executable": "C:/tools/codex.exe", "version": "test-provider",
+            "model_requested": request["provider"]["model"],
+            "effort_requested": request["provider"]["reasoning_effort"],
+            "control_argv": ["--strict-config", "--ephemeral"], "prompt_version": "research-v1"}
 
 
 def fetch_history(*, requested_id: str = "source-one", result_id: str = "source-one",
@@ -64,15 +72,25 @@ def fetch_history(*, requested_id: str = "source-one", result_id: str = "source-
 def quick_complete() -> list[dict[str, object]]:
     return [
         event(1, "research_initialized", {"request": valid_request_payload()}),
-        event(2, "decision_recorded", {"decision_id": "d0001", "kind": "worker", "reason_code": "initial_approach", "action": ACTION, "details": DETAILS}),
-        event(3, "action_intended", {"action_id": "a0001", "packet": PACKET, "packet_sha256": SHA}),
-        event(4, "action_finished", {"action_id": "a0001", "outcome": "succeeded", "exit_code": 0,
+        event(2, "provider_configured", provider_config()),
+        event(3, "decision_recorded", {"decision_id": "d0001", "kind": "worker", "reason_code": "initial_approach", "action": ACTION, "details": DETAILS}),
+        event(4, "action_intended", {"action_id": "a0001", "packet": PACKET, "packet_sha256": SHA}),
+        event(5, "action_finished", {"action_id": "a0001", "outcome": "succeeded", "exit_code": 0,
               "stdout_sha256": "0" * 64, "stderr_sha256": "1" * 64, "result": {"task_type": "exploration", "deliverables": ["d"], "subquestions": ["q"], "missing_inputs": [], "proposed_checks": [], "source_needs": []}, "error": None, "telemetry": TELEMETRY}),
-        event(5, "research_finished", {"status": "complete", "assessment": {"status": "unresolved"}, "reason": "assessment_satisfied", "report_markdown": "# Report\n", "log_markdown": "# Log\n"}),
+        event(6, "research_finished", {"status": "complete", "assessment": {"status": "unresolved"}, "reason": "assessment_satisfied", "report_markdown": "# Report\n", "log_markdown": "# Log\n"}),
     ]
 
 
 class ResearchEventTests(unittest.TestCase):
+    def test_worker_intent_cannot_expose_a_receipt_before_its_commit(self) -> None:
+        history = quick_complete()
+        packet = {"tool_results": {"a0002": {"tool_id": "a0002", "status": "succeeded"}}}
+        history[3]["body"]["packet"] = packet
+        history[3]["body"]["packet_sha256"] = hashlib.sha256(canonical_json_bytes(packet)).hexdigest()
+
+        with self.assertRaisesRegex(ValueError, "not committed before intent"):
+            replay_research_events([ResearchEvent.from_json(item) for item in history])
+
     def test_provider_configuration_is_persisted_and_matches_request(self) -> None:
         config = {"executable": "C:/tools/codex.exe", "version": "codex 0.154.0",
                   "model_requested": "gpt-test", "effort_requested": "high",
@@ -86,6 +104,32 @@ class ResearchEventTests(unittest.TestCase):
             with self.subTest(changed=changed), self.assertRaises(ValueError):
                 replay_research_events([ResearchEvent.from_json(event(1, "research_initialized", {"request": valid_request_payload()})),
                                         ResearchEvent.from_json(event(2, "provider_configured", invalid))])
+
+    def test_provider_configuration_is_lazy_until_first_worker_intent(self) -> None:
+        history = fetch_history()
+        history.extend([
+            event(5, "provider_configured", provider_config()),
+            event(6, "decision_recorded", {"decision_id": "d0002", "kind": "worker",
+                "reason_code": "frame_request", "action": {**ACTION, "id": "a0002"}, "details": DETAILS}),
+            event(7, "action_intended", {"action_id": "a0002", "packet": PACKET, "packet_sha256": SHA}),
+            event(8, "action_finished", {"action_id": "a0002", "outcome": "succeeded", "exit_code": 0,
+                "stdout_sha256": "0" * 64, "stderr_sha256": "1" * 64,
+                "result": {"task_type": "exploration", "deliverables": ["d"], "subquestions": ["q"],
+                    "missing_inputs": [], "proposed_checks": [], "source_needs": []}, "error": None, "telemetry": TELEMETRY}),
+        ])
+        self.assertEqual(replay_research_events([ResearchEvent.from_json(item) for item in history]).sequence, 8)
+        without_config = quick_complete(); del without_config[1]
+        for sequence, item in enumerate(without_config, 1): item["sequence"] = sequence
+        with self.assertRaises(ValueError):
+            replay_research_events([ResearchEvent.from_json(item) for item in without_config])
+        duplicate = fetch_history() + [event(5, "provider_configured", provider_config()),
+                                       event(6, "provider_configured", provider_config())]
+        with self.assertRaises(ValueError):
+            replay_research_events([ResearchEvent.from_json(item) for item in duplicate])
+        terminal = [event(1, "research_initialized", {"request": valid_request_payload()}),
+            event(2, "research_finished", {"status": "complete", "assessment": {}, "reason": "no_work",
+                "report_markdown": "report", "log_markdown": "log"})]
+        self.assertEqual(replay_research_events([ResearchEvent.from_json(item) for item in terminal]).status, "complete")
 
     def test_math_receipt_is_recomputed_from_the_intended_arguments(self) -> None:
         action = {"id": "a0001", "kind": "tool", "role": "check_integer", "branch": None,
@@ -104,6 +148,24 @@ class ResearchEventTests(unittest.TestCase):
         replayed = replay_research_events([ResearchEvent.from_json(item) for item in history])
         self.assertEqual(replayed.results["a0001"]["result"]["is_perfect"], True)
         self.assertIn("a0001", replayed.tool_results)
+        receipt = replayed.tool_results["a0001"]
+        worker_action = {"id": "a0002", "kind": "worker", "role": "answer", "branch": None,
+                         "round": 0, "dependencies": ["a0001"],
+                         "payload": {"prompt_version": "research-v1"}}
+        packet = {"tool_results": {"a0001": receipt}}
+        with_prior_receipt = history + [
+            event(5, "provider_configured", provider_config()),
+            event(6, "decision_recorded", {"decision_id": "d0002", "kind": "worker",
+                "reason_code": "quick_answer", "action": worker_action, "details": DETAILS}),
+            event(7, "action_intended", {"action_id": "a0002", "packet": packet,
+                "packet_sha256": hashlib.sha256(canonical_json_bytes(packet)).hexdigest()}),
+            event(8, "action_finished", {"action_id": "a0002", "outcome": "succeeded",
+                "exit_code": 0, "stdout_sha256": "0" * 64, "stderr_sha256": "1" * 64,
+                "result": valid_draft(), "error": None, "telemetry": TELEMETRY}),
+        ]
+        replayed_with_receipt = replay_research_events(
+            [ResearchEvent.from_json(item) for item in with_prior_receipt])
+        self.assertEqual(replayed_with_receipt.intent_packets["a0002"], canonical_json_bytes(packet))
         corrupted = copy.deepcopy(history)
         corrupted[-1]["body"]["result"]["result"]["is_perfect"] = False
         with self.assertRaises(ValueError):
@@ -137,7 +199,7 @@ class ResearchEventTests(unittest.TestCase):
         self.assertIn("a0001", snapshot.results)
 
     def test_contiguous_and_single_initialization_are_required(self) -> None:
-        history = quick_complete(); history[1]["sequence"] = 3
+        history = quick_complete(); history[1]["sequence"] = 4
         with self.assertRaises(ValueError): replay_research_events([ResearchEvent.from_json(item) for item in history])
         history = quick_complete(); history.insert(1, event(2, "research_initialized", {"request": valid_request_payload()}))
         for i, item in enumerate(history, 1): item["sequence"] = i
@@ -146,15 +208,15 @@ class ResearchEventTests(unittest.TestCase):
     def test_rejects_unknown_event_packet_hash_wrong_finish_and_terminal_action(self) -> None:
         unknown = event(1, "unknown", {})
         with self.assertRaises(ValueError): ResearchEvent.from_json(unknown)
-        history = quick_complete(); history[2]["body"]["packet_sha256"] = "2" * 64
+        history = quick_complete(); history[3]["body"]["packet_sha256"] = "2" * 64
         with self.assertRaises(ValueError): replay_research_events([ResearchEvent.from_json(item) for item in history])
-        history = quick_complete(); history[3]["body"]["action_id"] = "a0002"
+        history = quick_complete(); history[4]["body"]["action_id"] = "a0002"
         with self.assertRaises(ValueError): replay_research_events([ResearchEvent.from_json(item) for item in history])
-        history = quick_complete(); history.append(event(6, "decision_recorded", {"decision_id": "d0002", "kind": "worker", "reason_code": "initial_approach", "action": ACTION, "details": DETAILS}))
+        history = quick_complete(); history.append(event(7, "decision_recorded", {"decision_id": "d0002", "kind": "worker", "reason_code": "initial_approach", "action": ACTION, "details": DETAILS}))
         with self.assertRaises(ValueError): replay_research_events([ResearchEvent.from_json(item) for item in history])
 
     def test_finish_without_intent_and_gate_conflicts_fail(self) -> None:
-        history = quick_complete(); del history[2]
+        history = quick_complete(); del history[3]
         for i, item in enumerate(history, 1): item["sequence"] = i
         with self.assertRaises(ValueError): replay_research_events([ResearchEvent.from_json(item) for item in history])
         gate = event(2, "gate_opened", {"gate_id": "g0001", "kind": "missing_inputs", "questions": ["q"], "allowed_response": ["supply"], "resume_token": "0" * 64})
@@ -164,14 +226,14 @@ class ResearchEventTests(unittest.TestCase):
 
     def test_success_result_must_match_the_recorded_worker_role(self) -> None:
         history = quick_complete()
-        history[3]["body"]["result"] = {"arbitrary": "json"}
+        history[4]["body"]["result"] = {"arbitrary": "json"}
         with self.assertRaises(ValueError):
             replay_research_events([ResearchEvent.from_json(item) for item in history])
 
     def test_normalizes_equivalent_utc_instants_for_chronology(self) -> None:
         history = quick_complete()
         history[1]["occurred_at"] = "2026-09-15T17:00:02-07:00"
-        self.assertEqual(replay_research_events([ResearchEvent.from_json(item) for item in history]).sequence, 5)
+        self.assertEqual(replay_research_events([ResearchEvent.from_json(item) for item in history]).sequence, 6)
 
     def test_decision_action_kind_and_open_gate_finish_are_illegal(self) -> None:
         decision = event(2, "decision_recorded", {"decision_id": "d0001", "kind": "worker", "reason_code": "frame_request", "action": {**ACTION, "kind": "tool", "role": "fetch_source", "payload": {"id": "tool-one", "operation": "fetch_source", "arguments": {"source_id": "source-one"}}}, "details": DETAILS})

@@ -911,14 +911,14 @@ def test_deep_never_starts_third_branch(self):
 
 **Consumes:** Tasks 2–7 and Task 10's pure renderer. **Produces:** run_research, durable decisions/actions/gates, injectable provider/time boundaries.
 
-- [ ] Write failing full Deep stub integration through real store: two branches, synthesis, audit, report; use actual runner with a trusted scripted child for at least one test. Verify exact action sequence and distinct worker invocations.
-- [ ] Implement initialize/configure lazily: open/read durable run and return terminal/gate first; resolve provider only on a launch path. Non-model actions do not resolve Codex.
-- [ ] Execute decision -> intend -> child -> validate/observe -> captures -> finished -> next decision. Source catalogs and receipts are derived only from authorized completed actions.
-- [ ] At finish, construct an in-memory prospective terminal Snapshot with final status, assessment, and reason; render report/log from it; append one research_finished containing those exact strings; materialize projections afterward. The log includes a deterministic terminal summary, not the serialized final event (avoid a recursive log-in-event dependency). Renderer unit tests were completed in Task 10; now verify full final-event recovery through the engine.
-- [ ] Deadline check before every launch, after preflight, and after completion. Effective child timeout = min(per-call limit, broker operation limit if applicable, floor(remaining seconds)); <=0 means no launch. If a worker finishes after deadline, retain outcome but finish budget_exhausted before further work. Local spent time counts even on process failure.
-- [ ] Enforce max_input_bytes before intent. Reject rather than silently truncate evidence. Model/tool counters increment at intent. Timeout consumes budget. Gate waiting does not reset time.
-- [ ] Record telemetry from clocks/captures/provider header only, never worker JSON. Capture mismatch/unknown as Section 9 requires.
-- [ ] Fault-injection matrix: decision before intent, intent before launch, first capture, finish before routing, repair result before re-audit, response before resume, final event before report. Assert launched actions are never duplicated and ambiguous ones visibly block.
+- [x] Write failing full Deep stub integration through real store: two branches, synthesis, audit, report; use actual runner with a trusted scripted child for at least one test. Verify exact action sequence and distinct worker invocations.
+- [x] Implement initialize/configure lazily: open/read durable run and return terminal/gate first; resolve provider only on a launch path. Non-model actions do not resolve Codex.
+- [x] Execute decision -> intend -> child -> validate/observe -> captures -> finished -> next decision. Source catalogs and receipts are derived only from authorized completed actions.
+- [x] At finish, construct an in-memory prospective terminal Snapshot with final status, assessment, and reason; render report/log from it; append one research_finished containing those exact strings; materialize projections afterward. The log includes a deterministic terminal summary, not the serialized final event (avoid a recursive log-in-event dependency). Renderer unit tests were completed in Task 10; now verify full final-event recovery through the engine.
+- [x] Deadline check before every launch, after preflight, and after completion. Effective child timeout = min(per-call limit, broker operation limit if applicable, floor(remaining seconds)); <=0 means no launch. If a worker finishes after deadline, retain outcome but finish budget_exhausted before further work. Local spent time counts even on process failure.
+- [x] Enforce max_input_bytes before intent. Reject rather than silently truncate evidence. Model/tool counters increment at intent. Timeout consumes budget. Gate waiting does not reset time.
+- [x] Record telemetry from clocks/captures/provider header only, never worker JSON. Capture mismatch/unknown as Section 9 requires.
+- [x] Fault-injection matrix: decision before intent, intent before launch, first capture, finish before routing, repair result before re-audit, response before resume, final event before report. Assert launched actions are never duplicated and ambiguous ones visibly block.
 
 ```python
 def test_finished_branch_survives_restart_without_second_call(self):
@@ -934,7 +934,7 @@ def test_deadline_uses_persisted_initialization(self):
     self.assertEqual(state.status, "budget_exhausted")
 ```
 
-- [ ] Run engine/store/routing suites, then full unittest once after integration. Record session_id/exit_code if runner yields; poll the actual process to completion. Empty output from a yielded command is not success. Commit.
+- [x] Run engine/store/routing suites, then full unittest once after integration. Record session_id/exit_code if runner yields; poll the actual process to completion. Empty output from a yielded command is not success. Commit.
 
 ### Task 9: Add public CLI and human source continuation
 
@@ -946,12 +946,12 @@ Use exits: success0; awaiting_human10; blocked/incomplete11; budget_exhausted12;
 
 JSON result fields `{run_status, answer_status, model_calls_used, tool_calls_used, report_path, gate_id, reason}` with explicit nulls. Human output shows mode/objective and capabilities at init; action transitions on stderr at run; final answer status and report path at completion. JSON mode emits one final JSON on the appropriate stream, no progress chatter.
 
-- [ ] Tests use actual `python -m mathresearch research ...` in fresh processes. Put a trusted test `codex` native/explicit Node executable on PATH that honors the documented preflight and output protocol; do not monkeypatch cli.main in a `python -c` wrapper. If Windows executable fabrication is unavailable, use a version-controlled test launcher via an explicit provider-factory test harness at engine level, AND a separate public completed-run/no-provider CLI test. Escalate to Astra before exposing a production test-only executable override.
-- [ ] Test exact question/goal serialization, request-vs-flags conflict, missing choices, legacy commands unaffected, unauthorized capabilities refused.
-- [ ] Test run -> gate -> supply inline evidence -> resume preserves original request bytes and uses new source origin. Duplicate response idempotent; changed duplicate fails.
-- [ ] Test completed run after removing Codex from PATH; no resolver call. Model mismatch is not possible through resume flags; changed request file causes corruption, not adoption.
-- [ ] Examples use explicit high effort for Deep. Odd-perfect goal asks for investigation and useful next work. With no sources/fetch permission it must qualify recalled status; bounded checks optional via math_checks true.
-- [ ] Run CLI integration suite and legacy CLI suite. Commit.
+- [x] Tests use actual `python -m mathresearch research ...` in fresh processes. Put a trusted test `codex` native/explicit Node executable on PATH that honors the documented preflight and output protocol; do not monkeypatch cli.main in a `python -c` wrapper. If Windows executable fabrication is unavailable, use a version-controlled test launcher via an explicit provider-factory test harness at engine level, AND a separate public completed-run/no-provider CLI test. Escalate to Astra before exposing a production test-only executable override.
+- [x] Test exact question/goal serialization, request-vs-flags conflict, missing choices, legacy commands unaffected, unauthorized capabilities refused.
+- [x] Test run -> gate -> supply inline evidence -> resume preserves original request bytes and uses new source origin. Duplicate response idempotent; changed duplicate fails.
+- [x] Test completed run after removing Codex from PATH; no resolver call. Model mismatch is not possible through resume flags; changed request file causes corruption, not adoption.
+- [x] Examples use explicit high effort for Deep. Odd-perfect goal asks for investigation and useful next work. With no sources/fetch permission it must qualify recalled status; bounded checks optional via math_checks true.
+- [x] Run CLI integration suite and legacy CLI suite. Commit.
 
 ### Task 10: Render useful reports and review logs
 

@@ -1,0 +1,335 @@
+578f69b Fix research engine deadline and projection recovery
+ .../task-8-report.md                               | 17 ++++++
+ src/mathresearch/research/engine.py                | 63 +++++++++++-----------
+ src/mathresearch/research/store.py                 | 10 ++--
+ tests/unit/test_research_engine.py                 | 34 +++++++++---
+ 4 files changed, 85 insertions(+), 39 deletions(-)
+diff --git a/.superpowers/sdd/2026-09-16-research-quality-repair/task-8-report.md b/.superpowers/sdd/2026-09-16-research-quality-repair/task-8-report.md
+index 6bbcb8b..4a014ad 100644
+--- a/.superpowers/sdd/2026-09-16-research-quality-repair/task-8-report.md
++++ b/.superpowers/sdd/2026-09-16-research-quality-repair/task-8-report.md
+@@ -22,10 +22,27 @@ The initial focused invocation without `PYTHONPATH=src` exited 1 before test col
+ The full-suite command was run once after integration. Test discovery contains 274 `test_*` methods across 29 files; the completed runner returned success.
+ 
+ ## Files to commit
+ 
+ - `src/mathresearch/research/engine.py`
+ - `src/mathresearch/research/provider.py`
+ - `tests/unit/test_research_engine.py`
+ - `.superpowers/sdd/2026-09-16-research-quality-repair/task-8-report.md`
+ 
+ No historical run evidence or other task-owned modifications were staged.
++
++## Fix round 1 — reviewer findings
++
++### Root causes and changes
++
++1. `_execute_action` accepted a remaining-time value computed before `action_intended` and reused it after the intent hook. It now recomputes the deadline from persisted initialization immediately after intent and before creating either worker or broker child. An expired deadline records a durable `launch_failed` action with `deadline_before_launch`, empty captures, and consumed intent budget; no child is launched. The engine then finishes `budget_exhausted` with that reason.
++2. `LockedResearchRun.append` materialized terminal projections immediately after writing the event, leaving no fault boundary between immutable persistence and projection publication. It now accepts an internal post-persist callback. The engine uses it only for `research_finished` to expose `after_final_event_persisted_before_projection`. Restarting the terminal run reconstructs `report.md` and `research-log.md` from the durable event without provider resolution.
++
++### Regression evidence
++
++| Command | Exit | Tests | Result |
++| --- | ---: | ---: | --- |
++| `PYTHONPATH=src python -m unittest tests.unit.test_research_engine -v` (red) | 1 | 10 | two new regressions failed as expected: launch occurred after intent-time clock advance; no post-persist/pre-projection hook existed |
++| `PYTHONPATH=src python -m unittest tests.unit.test_research_engine -v` (green) | 0 | 10 | passed |
++| `PYTHONPATH=src python -m unittest tests.unit.test_research_engine tests.unit.test_research_store tests.unit.test_research_routing -v` | 0 | 34 | passed |
++
++Changed files for this round: `src/mathresearch/research/engine.py`, `src/mathresearch/research/store.py`, `tests/unit/test_research_engine.py`, and this report.
+diff --git a/src/mathresearch/research/engine.py b/src/mathresearch/research/engine.py
+index 579ff94..742e037 100644
+--- a/src/mathresearch/research/engine.py
++++ b/src/mathresearch/research/engine.py
+@@ -42,25 +42,26 @@ def _utc(now: Now) -> str:
+     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+ 
+ 
+ def _remaining(snapshot: ResearchSnapshot, now: Now) -> int:
+     start = datetime.fromisoformat(snapshot.initialized_at.replace("Z", "+00:00"))
+     deadline = start.timestamp() + snapshot.request.budgets["max_wall_seconds"]
+     return math.floor(deadline - now().timestamp())
+ 
+ 
+ def _event(run: LockedResearchRun, kind: str, body: Mapping[str, Any], now: Now,
+-           *, occurred_at: str | None = None) -> ResearchSnapshot:
++           *, occurred_at: str | None = None,
++           after_event_persisted: Callable[[ResearchSnapshot], None] | None = None) -> ResearchSnapshot:
+     item = ResearchEvent.from_json({"schema_version": 3, "record_type": "research_event",
+         "sequence": run.snapshot.sequence + 1, "event_type": kind,
+         "run_id": run.snapshot.request.run_id, "occurred_at": occurred_at or _utc(now), "body": dict(body)})
+-    return run.append(item)
++    return run.append(item, after_event_persisted=after_event_persisted)
+ 
+ 
+ def _decision_body(decision: Decision) -> dict[str, Any]:
+     if decision.decision_id is None or decision.details is None:
+         raise ValueError("routing decision is missing durable identifiers or details")
+     event_kind = decision.kind if decision.kind in {"worker", "tool", "gate", "finish"} else "noop"
+     return {"decision_id": decision.decision_id, "kind": event_kind,
+             "reason_code": decision.reason_code, "action": decision.action,
+             "details": dict(decision.details)}
+ 
+@@ -95,21 +96,23 @@ def _finalize(run: LockedResearchRun, decision: Decision, status: str,
+             "sequence": run.snapshot.sequence + 1, "event_type": "decision_recorded",
+             "run_id": run.snapshot.request.run_id, "occurred_at": _utc(now),
+             "body": _decision_body(decision)}))
+     if fault_hook: fault_hook("before_final_report", run.snapshot)
+     assessment = dict(decision.assessment or _assessment_for_stop(run.snapshot, reason))
+     finished_at = _utc(now)
+     prospective = ResearchSnapshot(**(run.snapshot.__dict__ | {"status": status,
+         "final_assessment": assessment, "reason": reason, "finished_at": finished_at}))
+     body = {"status": status, "assessment": assessment, "reason": reason,
+             "report_markdown": render_report(prospective), "log_markdown": render_log(prospective)}
+-    snapshot = _event(run, "research_finished", body, now, occurred_at=finished_at)
++    snapshot = _event(run, "research_finished", body, now, occurred_at=finished_at,
++                      after_event_persisted=(lambda committed: fault_hook(
++                          "after_final_event_persisted_before_projection", committed)) if fault_hook else None)
+     if fault_hook: fault_hook("after_final_event", snapshot)
+     return snapshot
+ 
+ 
+ def _open_gate(run: LockedResearchRun, decision: Decision, now: Now,
+                fault_hook: FaultHook | None) -> ResearchSnapshot:
+     if decision.gate is None: raise ValueError("gate decision is missing its gate payload")
+     body = {"gate_id": decision.gate["gate_id"], "kind": decision.gate["kind"],
+             "questions": list(decision.gate["questions"]),
+             "allowed_response": list(decision.gate["allowed_response"])}
+@@ -190,48 +193,47 @@ def _execute_action(run: LockedResearchRun, action: Mapping[str, Any], adapter:
+                     packet: Mapping[str, Any], scratch_parent: Path, remaining: int,
+                     now: Now, monotonic: Callable[[], float], fault_hook: FaultHook | None) -> ResearchSnapshot:
+     snapshot = run.snapshot
+     packet_bytes = canonical_json_bytes(packet)
+     if len(packet_bytes) > snapshot.request.budgets["max_input_bytes"]:
+         raise ValidationError("max_input_bytes", "intended packet exceeds request limit")
+     # Intent is committed before any child can start.
+     snapshot = _event(run, "action_intended", {"action_id": action["id"],
+         "packet": dict(packet), "packet_sha256": hashlib.sha256(packet_bytes).hexdigest()}, now)
+     if fault_hook: fault_hook("after_intent", snapshot)
+-    remaining = min(remaining, snapshot.request.budgets["per_call_seconds"])
+-    if remaining <= 0:
+-        decision = _finish_decision(snapshot, "budget_exhausted", "budget_exhausted",
+-                                    _assessment_for_stop(snapshot, "deadline_before_launch"))
+-        return _finalize(run, decision, "budget_exhausted", "deadline_before_launch", now, fault_hook)
+-
++    remaining = min(_remaining(snapshot, now), snapshot.request.budgets["per_call_seconds"])
+     before = monotonic()
+-    try:
+-        with tempfile.TemporaryDirectory(prefix="research-action-", dir=str(scratch_parent)) as scratch_name:
+-            scratch = Path(scratch_name)
+-            if action["kind"] == "worker":
+-                if adapter is None: raise ValueError("worker launch requires a configured provider")
+-                prompt = build_prompt(action["role"], packet)
+-                output = execute_worker(adapter, WorkerInput(
+-                    stage=f"{action['role']}:{action.get('branch') or ''}", prompt=prompt,
+-                    output_schema=packet["output_schema"]), scratch=scratch,
+-                    timeout_seconds=remaining)
+-                observed = parse_provider_observation(output.stderr)
+-                mismatch = check_provider_observation(snapshot.request, observed)
+-                if mismatch is not None:
+-                    output = WorkerOutput("protocol_error", output.exit_code, output.stdout,
+-                        output.stderr, None, mismatch)
+-            else:
+-                output, _ = _tool_result(snapshot, action, scratch, remaining)
+-                observed = {"model": None, "effort": None}
+-    except (OSError, ValueError, TypeError, ValidationError) as exc:
+-        output = WorkerOutput("protocol_error", None, b"", b"", None, str(exc)[:4000])
++    if remaining <= 0:
++        output = WorkerOutput("launch_failed", None, b"", b"", None, "deadline_before_launch")
+         observed = {"model": None, "effort": None}
++    else:
++        try:
++            with tempfile.TemporaryDirectory(prefix="research-action-", dir=str(scratch_parent)) as scratch_name:
++                scratch = Path(scratch_name)
++                if action["kind"] == "worker":
++                    if adapter is None: raise ValueError("worker launch requires a configured provider")
++                    prompt = build_prompt(action["role"], packet)
++                    output = execute_worker(adapter, WorkerInput(
++                        stage=f"{action['role']}:{action.get('branch') or ''}", prompt=prompt,
++                        output_schema=packet["output_schema"]), scratch=scratch,
++                        timeout_seconds=remaining)
++                    observed = parse_provider_observation(output.stderr)
++                    mismatch = check_provider_observation(snapshot.request, observed)
++                    if mismatch is not None:
++                        output = WorkerOutput("protocol_error", output.exit_code, output.stdout,
++                            output.stderr, None, mismatch)
++                else:
++                    output, _ = _tool_result(snapshot, action, scratch, remaining)
++                    observed = {"model": None, "effort": None}
++        except (OSError, ValueError, TypeError, ValidationError) as exc:
++            output = WorkerOutput("protocol_error", None, b"", b"", None, str(exc)[:4000])
++            observed = {"model": None, "effort": None}
+     duration_ms = int((monotonic() - before) * 1000)
+     stdout_digest = run.write_capture(action["id"], "stdout.bin", output.stdout)
+     if fault_hook: fault_hook("after_stdout_capture", run.snapshot)
+     stderr_digest = run.write_capture(action["id"], "stderr.log", output.stderr)
+     if fault_hook: fault_hook("after_stderr_capture", run.snapshot)
+     telemetry = _telemetry(duration_ms, len(packet_bytes), len(output.stdout) + len(output.stderr), observed)
+     event_status = output.outcome if output.outcome in {"succeeded", "failed", "timed_out", "cancelled", "launch_failed", "protocol_error"} else "failed"
+     finished = _event(run, "action_finished", {"action_id": action["id"],
+         "outcome": event_status, "exit_code": output.exit_code,
+         "stdout_sha256": stdout_digest, "stderr_sha256": stderr_digest,
+@@ -316,21 +318,22 @@ def run_research(run_dir: Path, *, provider_factory: ProviderFactory | None = No
+                 packet = _tool_packet(run.snapshot, action)
+             remaining = min(_remaining(run.snapshot, now), run.snapshot.request.budgets["per_call_seconds"])
+             if remaining <= 0:
+                 reason = "deadline_before_intent"
+                 expired = _finish_decision(run.snapshot, "budget_exhausted", "budget_exhausted",
+                     _assessment_for_stop(run.snapshot, reason))
+                 return _finalize(run, expired, "budget_exhausted", reason, now, fault_hook)
+             finished = _execute_action(run, action, adapter, packet, scratch_parent, remaining,
+                                        now, monotonic, fault_hook)
+             if _remaining(finished, now) <= 0 and finished.status not in {"complete", "incomplete", "blocked", "budget_exhausted"}:
+-                reason = "deadline_after_action"
++                outcome = finished.outcomes.get(action["id"], {})
++                reason = "deadline_before_launch" if outcome.get("error") == "deadline_before_launch" else "deadline_after_action"
+                 expired = _finish_decision(finished, "budget_exhausted", "budget_exhausted",
+                     _assessment_for_stop(finished, reason))
+                 return _finalize(run, expired, "budget_exhausted", reason, now, fault_hook)
+         reason = "transition_limit_reached"
+         stalled = _finish_decision(run.snapshot, reason, "blocked", _assessment_for_stop(run.snapshot, reason))
+         return _finalize(run, stalled, "blocked", reason, now, fault_hook)
+     raise AssertionError("unreachable")
+ 
+ 
+ def answer_research_gate(run_dir: Path, response: Mapping[str, Any], *,
+diff --git a/src/mathresearch/research/store.py b/src/mathresearch/research/store.py
+index 8c6e49a..da0f110 100644
+--- a/src/mathresearch/research/store.py
++++ b/src/mathresearch/research/store.py
+@@ -1,21 +1,21 @@
+ """Locked, isolated storage for version-three research runs."""
+ 
+ from __future__ import annotations
+ 
+ import hashlib
+ import json
+ import os
+ import stat
+ from contextlib import contextmanager
+ from pathlib import Path
+-from typing import Any, Iterator
++from typing import Any, Callable, Iterator
+ 
+ from mathresearch.errors import RunCorruptError, RunNotFoundError, RunStoreError, RunUninitializedError
+ from mathresearch.locking import acquire_run_lock
+ from mathresearch.run_store import _atomic_write_new, _atomic_write_replace, _documented_event_temporary_target, _documented_temporary_target, _load_persisted_json, _require_existing_run_directory, _require_regular_file, _require_safe_existing_lock_target, _verify_temporary_hardlink_aliases
+ from mathresearch.contracts.research_request import ResearchRequest
+ from .events import ResearchEvent, ResearchSnapshot, canonical_json_bytes, replay_research_events
+ 
+ 
+ def _safe_directory(path: Path, run_dir: Path) -> None:
+     try: metadata = path.lstat()
+@@ -130,28 +130,32 @@ def _materialize(run_dir: Path, snapshot: ResearchSnapshot, events: tuple[Resear
+             _atomic_write_replace(run_dir / "report.md", item.body["report_markdown"].encode("utf-8")); _atomic_write_replace(run_dir / "research-log.md", item.body["log_markdown"].encode("utf-8"))
+ 
+ 
+ class LockedResearchRun:
+     def __init__(self, run_dir: Path, events: tuple[ResearchEvent, ...], snapshot: ResearchSnapshot) -> None:
+         self.run_dir, self._events, self._snapshot = run_dir, events, snapshot
+     @property
+     def snapshot(self) -> ResearchSnapshot: return self._snapshot
+     @property
+     def events(self) -> tuple[ResearchEvent, ...]: return self._events
+-    def append(self, event: ResearchEvent) -> ResearchSnapshot:
++    def append(self, event: ResearchEvent, *,
++               after_event_persisted: Callable[[ResearchSnapshot], None] | None = None) -> ResearchSnapshot:
+         candidate = self._events + (event,)
+         try: snapshot = replay_research_events(candidate)
+         except ValueError as exc: raise RunStoreError("invalid research event append") from exc
+         target = self.run_dir / "events" / f"{event.sequence:06d}.json"
+         if target.exists(): raise RunCorruptError(self.run_dir, "immutable event already exists")
+         _atomic_write_new(target, canonical_json_bytes(event.to_json()))
+-        self._events, self._snapshot = candidate, snapshot; _materialize(self.run_dir, snapshot, candidate)
++        self._events, self._snapshot = candidate, snapshot
++        if after_event_persisted is not None:
++            after_event_persisted(snapshot)
++        _materialize(self.run_dir, snapshot, candidate)
+         return snapshot
+     def write_capture(self, action_id: str, name: str, data: bytes) -> str:
+         if name not in {"stdout.bin", "stderr.log"} or action_id not in self._snapshot.actions: raise RunStoreError("unsafe capture target")
+         directory = self.run_dir / "actions" / action_id; directory.mkdir(parents=True, exist_ok=True)
+         _atomic_write_new(directory / name, data); return hashlib.sha256(data).hexdigest()
+ 
+ 
+ def initialize_research(request_path: Path, run_dir: Path) -> ResearchSnapshot:
+     try:
+         raw = json.loads(request_path.read_text(encoding="utf-8")); request = ResearchRequest.from_json(raw)
+diff --git a/tests/unit/test_research_engine.py b/tests/unit/test_research_engine.py
+index c0829ae..52f1005 100644
+--- a/tests/unit/test_research_engine.py
++++ b/tests/unit/test_research_engine.py
+@@ -203,46 +203,68 @@ class ResearchEngineTests(unittest.TestCase):
+             def crash(phase: str, snapshot: Any) -> None:
+                 if phase == "after_revise__finished": raise RuntimeError("stop before re-audit")
+             with self.assertRaisesRegex(RuntimeError, "stop before re-audit"):
+                 run_research(run_dir, provider_factory=factory, fault_hook=crash)
+             resumed = run_research(run_dir, provider_factory=factory)
+ 
+             self.assertEqual(resumed.status, "complete")
+             self.assertEqual(stages.count("revise:"), 1)
+             self.assertEqual(stages.count("audit:"), 2)
+ 
+-    def test_crash_after_final_event_returns_same_terminal_projection_without_calls(self) -> None:
++    def test_final_event_before_projection_recovers_terminal_projection_without_calls(self) -> None:
+         with tempfile.TemporaryDirectory() as temp:
+             root = Path(temp); run_dir = self._run(root)
+             stages: list[str] = []; factory, _, _ = self._factory(root, stages)
+             def crash(phase: str, snapshot: Any) -> None:
+-                if phase == "after_final_event": raise RuntimeError("stop after final event")
+-            with self.assertRaisesRegex(RuntimeError, "stop after final event"):
++                if phase == "after_final_event_persisted_before_projection":
++                    self.assertTrue((run_dir / "events" / f"{snapshot.sequence:06d}.json").exists())
++                    self.assertFalse((run_dir / "report.md").exists())
++                    self.assertFalse((run_dir / "research-log.md").exists())
++                    raise RuntimeError("stop after final event persistence")
++            with self.assertRaisesRegex(RuntimeError, "stop after final event persistence"):
+                 run_research(run_dir, provider_factory=factory, fault_hook=crash)
+-            report = (run_dir / "report.md").read_bytes()
+-            resumed = run_research(run_dir, provider_factory=lambda request: self.fail("terminal resume resolved provider"))
++            resumed = run_research(run_dir, provider_factory=lambda request, *, recorded_config: self.fail("terminal resume resolved provider"))
+ 
+             self.assertEqual(resumed.status, "complete")
+-            self.assertEqual((run_dir / "report.md").read_bytes(), report)
++            self.assertEqual((run_dir / "report.md").read_text(encoding="utf-8"), render_report(resumed))
++            self.assertEqual((run_dir / "research-log.md").read_text(encoding="utf-8"), render_log(resumed))
+             self.assertEqual(len(stages), 5)
+ 
+     def test_deadline_uses_persisted_initialization_without_resolving_provider(self) -> None:
+         with tempfile.TemporaryDirectory() as temp:
+             root = Path(temp); run_dir = self._run(root)
+             state = load_research_status(run_dir)
+             start = datetime.fromisoformat(state.initialized_at.replace("Z", "+00:00"))
+             future = start + timedelta(seconds=state.request.budgets["max_wall_seconds"] + 1)
+             result = run_research(run_dir, provider_factory=lambda request: self.fail("deadline resolved provider"),
+                                   now=lambda: future)
+             self.assertEqual(result.status, "budget_exhausted")
+             self.assertEqual(result.reason, "deadline_before_launch")
+ 
++    def test_deadline_rechecked_after_intent_prevents_child_launch(self) -> None:
++        with tempfile.TemporaryDirectory() as temp:
++            root = Path(temp); run_dir = self._run(root)
++            state = load_research_status(run_dir)
++            start = datetime.fromisoformat(state.initialized_at.replace("Z", "+00:00"))
++            clock = {"value": start + timedelta(seconds=1)}
++            stages: list[str] = []; factory, _, _ = self._factory(root, stages)
++
++            def advance_after_intent(phase: str, snapshot: Any) -> None:
++                if phase == "after_intent":
++                    clock["value"] = start + timedelta(seconds=snapshot.request.budgets["max_wall_seconds"] + 1)
++
++            result = run_research(run_dir, provider_factory=factory,
++                                  now=lambda: clock["value"], fault_hook=advance_after_intent)
++            self.assertEqual((result.status, result.reason), ("budget_exhausted", "deadline_before_launch"))
++            self.assertEqual(stages, [])
++            self.assertEqual(result.outcomes["a0001"]["outcome"], "launch_failed")
++
+     def test_gate_answer_is_idempotent_and_conflicting_duplicate_is_rejected(self) -> None:
+         with tempfile.TemporaryDirectory() as temp:
+             root = Path(temp)
+             def require_input(payload: dict[str, Any]) -> None:
+                 payload["objective"] = "prove"
+             run_dir = self._run(root, configure=require_input)
+             stages: list[str] = []; factory, _, _ = self._factory(root, stages)
+             gate_state = run_research(run_dir, provider_factory=factory)
+             self.assertEqual(gate_state.status, "awaiting_human")
+             gate = gate_state.pending_gate

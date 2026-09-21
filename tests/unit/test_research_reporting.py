@@ -6,11 +6,33 @@ import unittest
 from dataclasses import replace
 from types import MappingProxyType
 
+from mathresearch.research.events import canonical_json_bytes
 from mathresearch.research.reporting import render_log, render_report
 from tests.unit.test_research_prompts import action, audit, draft, snapshot, source_record, tool_receipt
 
 
 class ResearchReportingTests(unittest.TestCase):
+    def test_report_does_not_resolve_claim_receipt_from_a_later_audit_packet(self) -> None:
+        state = snapshot(); candidate = copy.deepcopy(state.results["draft-one"])
+        candidate["claims"][0].update({"kind": "deduction", "step_ids": ["step-one"],
+                                        "tool_ids": ["check-one"]})
+        candidate["proof_steps"] = [{"id": "step-one", "statement": "Use the check.",
+            "justification": "The receipt encodes the calculation.", "depends_on": [], "citations": []}]
+        review = copy.deepcopy(state.results["audit-one"])
+        review["checks"][0]["verdict"] = "supported"
+        review["challenges"][0]["tool_ids"] = ["check-one"]
+        packet = {"sources": dict(state.sources), "tool_results": {}}
+        audit_packet = {"sources": dict(state.sources), "tool_results": {"check-one": tool_receipt()}}
+        state = replace(state,
+            results=MappingProxyType(dict(state.results) | {"draft-one": candidate, "audit-one": review}),
+            intent_packets=MappingProxyType({"draft-one": canonical_json_bytes(packet),
+                "audit-one": canonical_json_bytes(audit_packet)}))
+
+        report = render_report(state)
+
+        self.assertIn("Provenance status: **invalid**", report)
+        self.assertIn("unknown_successful_tool:claim-one:check-one", report)
+
     def test_report_preserves_original_intent_and_separates_statuses(self) -> None:
         state = snapshot()
         payload = state.request.to_json()
@@ -51,7 +73,11 @@ class ResearchReportingTests(unittest.TestCase):
         review = copy.deepcopy(state.results["audit-one"])
         review["checks"][0].update({"verdict": "supported", "reasoning": "The cited passage states that the problem remains open."})
         results = dict(state.results) | {"draft-one": candidate, "audit-one": review}
-        state = replace(state, sources=MappingProxyType(sources), results=MappingProxyType(results))
+        draft_packet = {"sources": sources, "tool_results": {"check-one": tool_receipt()}}
+        intent_packets = dict(state.intent_packets)
+        intent_packets["draft-one"] = canonical_json_bytes(draft_packet)
+        state = replace(state, sources=MappingProxyType(sources), results=MappingProxyType(results),
+                        intent_packets=MappingProxyType(intent_packets))
         report = render_report(state)
         self.assertIn("supplied/captured sources describe this as open as of 2024-03-02T00:00:00Z", report)
         self.assertNotIn("Current literature verified", report)

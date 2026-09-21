@@ -58,6 +58,25 @@ class ResearchProvenanceTests(unittest.TestCase):
         self.assertIn("unknown_successful_tool:challenge:claim-one:future-one",
                       check_provenance(draft, {}, {"check-one": successful}, audit=audit))
 
+    def test_audit_receipt_catalog_is_validated_before_challenges_can_cite_it(self) -> None:
+        draft = valid_draft()
+        request = {"id": "request-one", "operation": "check_integer", "arguments": {"n": 6}}
+        successful = {"tool_id": "check-one", "request": request, "status": "succeeded",
+            "result": {"n": 6, "proper_divisors": [1, 2, 3], "proper_divisor_sum": 6,
+                       "is_perfect": True}, "error": None, "scope": "initial",
+            "implementation_version": "mathresearch-broker-v1"}
+        audit = {"checks": [{"claim_id": "claim-one", "verdict": "supported",
+            "reasoning": "Checked.", "checked_step_ids": []}],
+            "challenges": [{"claim_id": "claim-one", "attack": "Check the value.",
+            "result": "The receipt agrees.", "outcome": "survives", "tool_ids": ["check-one"]}],
+            "missing_evidence": [], "tool_requests": [], "recommended_action": "finish"}
+
+        issues = check_provenance(draft, {}, {}, audit=audit, audit_sources={},
+                                  audit_tool_results={"check-one": successful | {"hidden": True}})
+
+        self.assertIn("invalid_tool_receipt:check-one", issues)
+        self.assertIn("unknown_successful_tool:challenge:claim-one:check-one", issues)
+
     def test_historical_frame_success_criterion_cannot_be_a_v3_source(self) -> None:
         fixture_path = Path(__file__).parents[1] / "fixtures" / "research" / "observed_circular_support.json"
         fixture = json.loads(fixture_path.read_text(encoding="utf-8"))

@@ -5,11 +5,56 @@ import unittest
 
 from dataclasses import replace
 
-from mathresearch.research.routing import next_decision
-from tests.unit.test_research_prompts import action, draft, snapshot
+from mathresearch.research.events import canonical_json_bytes
+from mathresearch.research.routing import assess_latest, next_decision
+from tests.unit.test_research_prompts import action, draft, snapshot, tool_receipt
 
 
 class ResearchRoutingTests(unittest.TestCase):
+    def test_assessment_does_not_resolve_draft_forward_reference_from_later_receipt(self) -> None:
+        from types import MappingProxyType
+        base = snapshot()
+        candidate = copy.deepcopy(base.results["draft-one"])
+        candidate["claims"][0].update({"kind": "deduction", "step_ids": ["step-one"],
+                                        "tool_ids": ["check-one"]})
+        candidate["proof_steps"] = [{"id": "step-one", "statement": "The check supports the claim.",
+                                      "justification": "The receipt is cited.", "depends_on": [],
+                                      "citations": []}]
+        review = copy.deepcopy(base.results["audit-one"])
+        review["checks"][0]["verdict"] = "supported"
+        review["challenges"][0]["outcome"] = "fails"
+        review["challenges"][0]["tool_ids"] = ["check-one"]
+        packet = {"sources": dict(base.sources), "tool_results": {}}
+        audit_packet = {"sources": dict(base.sources), "tool_results": {"check-one": tool_receipt()}}
+        state = replace(base,
+            results=MappingProxyType(dict(base.results) | {"draft-one": candidate, "audit-one": review}),
+            tool_results=MappingProxyType({"check-one": tool_receipt()}),
+            intent_packets=MappingProxyType({"draft-one": canonical_json_bytes(packet),
+                                             "audit-one": canonical_json_bytes(audit_packet)}))
+
+        assessment = assess_latest(state)
+
+        self.assertEqual(assessment["provenance_status"], "invalid")
+        self.assertIn("claim-one", " ".join(assessment["unresolved"]))
+
+        candidate["claims"][0]["tool_ids"] = []
+        state = replace(state, results=MappingProxyType(dict(state.results) | {"draft-one": candidate}))
+        later_audit_assessment = assess_latest(state)
+        self.assertEqual(later_audit_assessment["provenance_status"], "valid", later_audit_assessment["unresolved"])
+        self.assertEqual(later_audit_assessment["answer_status"], "refuted")
+        self.assertEqual(later_audit_assessment["computation_status"], "performed")
+
+    def test_run_level_denied_receipts_remain_visible_in_assessment(self) -> None:
+        from types import MappingProxyType
+        base = snapshot()
+        denied = tool_receipt() | {"tool_id": "check-denied", "status": "denied",
+                                   "result": None, "error": "math checks disabled"}
+        state = replace(base, tool_results=MappingProxyType({"check-denied": denied}))
+
+        assessment = assess_latest(state)
+
+        self.assertIn("tool_check-denied_denied", assessment["unresolved"])
+
     def test_terminal_snapshot_is_noop(self) -> None:
         state = replace(snapshot(), status="complete")
         self.assertEqual(next_decision(state).reason_code, "terminal_noop")
@@ -21,6 +66,17 @@ class ResearchRoutingTests(unittest.TestCase):
                 "allowed_response": ["supply"], "resume_token": "0" * 64}
         state = replace(snapshot(), pending_gate=gate, pending_action_id=None)
         self.assertEqual((next_decision(state).kind, next_decision(state).reason_code), ("await", "human_input_needed"))
+
+    def test_decision_without_intent_resumes_same_action_without_a_new_decision(self) -> None:
+        from types import MappingProxyType
+        act = action("a0001", "frame")
+        record = {"decision_id": "d0001", "kind": "worker", "reason_code": "frame_request",
+                  "action": act, "details": {"selected_draft_id": None, "audit_id": None,
+                  "question_status": None, "blockers": [], "finish_status": None, "round": 0}}
+        state = replace(snapshot(), actions=MappingProxyType({"a0001": act}), results=MappingProxyType({}),
+                        decisions=(record,), pending_action_id="a0001", intended_action_ids=frozenset())
+        resumed = next_decision(state)
+        self.assertEqual((resumed.kind, resumed.action["id"], resumed.decision_id), ("resume", "a0001", "d0001"))
 
     def test_quick_is_one_unreviewed_answer_call(self) -> None:
         from types import MappingProxyType

@@ -279,6 +279,24 @@ class ResearchEngineTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "payload conflict"):
                 answer_research_gate(run_dir, response | {"text": "changed"})
 
+    def test_cancelled_gate_finishes_without_resuming_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            run_dir = self._run(root, objective="prove")
+            stages: list[str] = []; factory, _, _ = self._factory(root, stages)
+            waiting = run_research(run_dir, provider_factory=factory)
+            self.assertEqual(waiting.status, "awaiting_human")
+            gate = waiting.pending_gate
+            response = {"schema_version": 3, "record_type": "research_gate_response",
+                "gate_id": gate["gate_id"], "response_id": "cancel-one", "decision": "cancel",
+                "text": None, "sources": []}
+
+            cancelled = answer_research_gate(run_dir, response)
+            self.assertEqual((cancelled.status, cancelled.reason), ("incomplete", "user_cancelled"))
+            resumed = run_research(run_dir, provider_factory=lambda request, *, recorded_config: self.fail("cancel resumed provider"))
+            self.assertEqual((resumed.status, resumed.reason), ("incomplete", "user_cancelled"))
+            self.assertEqual(stages, ["frame:"])
+
 
 if __name__ == "__main__":
     unittest.main()

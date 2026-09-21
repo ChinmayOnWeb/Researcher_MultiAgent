@@ -20,25 +20,9 @@ def _validated_draft(draft: Mapping[str, Any]) -> dict[str, Any]:
     raise errors[0]
 
 
-def check_provenance(draft: Mapping[str, Any], sources: Mapping[str, Any],
-                     tool_results: Mapping[str, Any], *,
-                     audit: Mapping[str, Any] | None = None) -> list[str]:
-    """Return deterministic contract issues for unknown or mismatched evidence references.
-
-    Passing means IDs, offsets, quotes, hashes, and receipt status are mechanically
-    consistent. It does not establish source truth or semantic entailment.
-    """
+def _validated_catalog(sources: Mapping[str, Any], tool_results: Mapping[str, Any]
+                       ) -> tuple[dict[str, Mapping[str, Any]], set[str], list[str]]:
     issues: list[str] = []
-    try:
-        checked = _validated_draft(draft)
-    except (ValidationError, TypeError, KeyError):
-        return ["invalid_draft"]
-    checked_audit = None
-    if audit is not None:
-        try: checked_audit = validate_audit_for_draft(audit, checked)
-        except (ValidationError, TypeError, KeyError): issues.append("invalid_audit")
-    if not isinstance(sources, Mapping) or not isinstance(tool_results, Mapping):
-        return ["invalid_evidence_catalog"]
     checked_sources: dict[str, Mapping[str, Any]] = {}
     for source_id, source in sources.items():
         if not isinstance(source_id, str) or not isinstance(source, Mapping) or source.get("id") != source_id:
@@ -88,6 +72,41 @@ def check_provenance(draft: Mapping[str, Any], sources: Mapping[str, Any],
             if checked_receipt["status"] == "succeeded": valid_tools.add(tool_id)
         except (ValidationError, TypeError, KeyError, AttributeError, ImportError):
             issues.append(f"invalid_tool_receipt:{tool_id}")
+    return checked_sources, valid_tools, issues
+
+
+def check_provenance(draft: Mapping[str, Any], sources: Mapping[str, Any],
+                     tool_results: Mapping[str, Any], *,
+                     audit: Mapping[str, Any] | None = None,
+                     audit_sources: Mapping[str, Any] | None = None,
+                     audit_tool_results: Mapping[str, Any] | None = None) -> list[str]:
+    """Return deterministic contract issues for unknown or mismatched evidence references.
+
+    Passing means IDs, offsets, quotes, hashes, and receipt status are mechanically
+    consistent. It does not establish source truth or semantic entailment.
+    """
+    issues: list[str] = []
+    try:
+        checked = _validated_draft(draft)
+    except (ValidationError, TypeError, KeyError):
+        return ["invalid_draft"]
+    checked_audit = None
+    if audit is not None:
+        try: checked_audit = validate_audit_for_draft(audit, checked)
+        except (ValidationError, TypeError, KeyError): issues.append("invalid_audit")
+    if not isinstance(sources, Mapping) or not isinstance(tool_results, Mapping):
+        return ["invalid_evidence_catalog"]
+    checked_sources, valid_tools, catalog_issues = _validated_catalog(sources, tool_results)
+    issues.extend(catalog_issues)
+    audit_valid_tools = valid_tools
+    if audit_tool_results is not None:
+        checked_audit_sources = sources if audit_sources is None else audit_sources
+        if not isinstance(audit_tool_results, Mapping) or not isinstance(checked_audit_sources, Mapping):
+            issues.append("invalid_audit_evidence_catalog")
+            audit_valid_tools = set()
+        else:
+            _, audit_valid_tools, audit_issues = _validated_catalog(checked_audit_sources, audit_tool_results)
+            issues.extend(audit_issues)
     for claim in checked["claims"]:
         for citation in claim["citations"]:
             source_id = citation["source_id"]
@@ -107,13 +126,16 @@ def check_provenance(draft: Mapping[str, Any], sources: Mapping[str, Any],
     if checked_audit is not None:
         for challenge in checked_audit["challenges"]:
             for tool_id in challenge["tool_ids"]:
-                if tool_id not in valid_tools:
+                if tool_id not in audit_valid_tools:
                     issues.append(f"unknown_successful_tool:challenge:{challenge['claim_id']}:{tool_id}")
     return issues
 
 
 def assess(draft: Mapping[str, Any], sources: Mapping[str, Any],
            tool_results: Mapping[str, Any], *, audit: Mapping[str, Any] | None = None,
+           audit_sources: Mapping[str, Any] | None = None,
+           audit_tool_results: Mapping[str, Any] | None = None,
+           run_tool_results: Mapping[str, Any] | None = None,
            objective: str = "investigate") -> dict[str, Any]:
     """Derive a qualified, deterministic assessment from validated records.
 
@@ -121,13 +143,15 @@ def assess(draft: Mapping[str, Any], sources: Mapping[str, Any],
     audit labels with mechanical evidence integrity and dependency status.
     """
     checked = _validated_draft(draft)
-    issues = check_provenance(checked, sources, tool_results, audit=audit)
+    issues = check_provenance(checked, sources, tool_results, audit=audit,
+                              audit_sources=audit_sources, audit_tool_results=audit_tool_results)
     checked_audit = None
     if audit is not None and "invalid_audit" not in issues:
         checked_audit = validate_audit_for_draft(audit, checked)
     math_succeeded = False
-    if isinstance(tool_results, Mapping):
-        for tool_id, receipt in tool_results.items():
+    observed_tools = tool_results if run_tool_results is None else run_tool_results
+    if isinstance(observed_tools, Mapping):
+        for tool_id, receipt in observed_tools.items():
             try:
                 from mathresearch.research.broker import validate_tool_receipt
                 if isinstance(receipt, Mapping):
@@ -138,6 +162,10 @@ def assess(draft: Mapping[str, Any], sources: Mapping[str, Any],
                 continue
     computation = "performed" if math_succeeded else "not_performed"
     findings: list[dict[str, Any]] = []
+    failed_tools = ([f"tool_{tool_id}_{receipt['status']}" for tool_id, receipt in observed_tools.items()
+                    if isinstance(receipt, Mapping) and receipt.get("status") in {"failed", "denied"}]
+                    if isinstance(observed_tools, Mapping) else [])
+    failed_tools = list(dict.fromkeys(failed_tools))
     if issues:
         findings = [{"claim_id": claim["id"], "status": "unverified",
                      "reasons": [issue for issue in issues if issue.endswith(claim["id"]) or f":{claim['id']}:" in issue] or ["invalid_evidence_reference"]}
@@ -145,7 +173,7 @@ def assess(draft: Mapping[str, Any], sources: Mapping[str, Any],
         return {"answer_status": "unverified", "provenance_status": "invalid",
                 "semantic_status": "issues_found" if audit is not None else "not_audited",
                 "computation_status": computation, "formal_status": "not_performed",
-                "claim_findings": findings, "unresolved": list(dict.fromkeys(issues))}
+                "claim_findings": findings, "unresolved": list(dict.fromkeys(issues + failed_tools))}
     checks = {} if checked_audit is None else {item["claim_id"]: item for item in checked_audit["checks"]}
     challenges: dict[str, list[dict[str, Any]]] = {}
     if checked_audit is not None:
@@ -198,10 +226,7 @@ def assess(draft: Mapping[str, Any], sources: Mapping[str, Any],
         findings.append({"claim_id": claim["id"], "status": status_for(claim["id"]), "reasons": reasons})
     critical_statuses = [memo[c["id"]] for c in checked["claims"] if c["critical"]]
     unresolved: list[str] = []
-    if isinstance(tool_results, Mapping):
-        for tool_id, receipt in tool_results.items():
-            if isinstance(receipt, Mapping) and receipt.get("status") in {"failed", "denied"}:
-                unresolved.append(f"tool_{tool_id}_{receipt['status']}")
+    unresolved.extend(failed_tools)
     if checked_audit is None: unresolved.append("not_audited")
     else:
         unresolved.extend(checked_audit["missing_evidence"])
