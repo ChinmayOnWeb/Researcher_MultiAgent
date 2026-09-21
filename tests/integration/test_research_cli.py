@@ -204,6 +204,25 @@ class ResearchCliIntegrationTests(unittest.TestCase):
                 "--run-dir", str(run_dir), "--json")
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_offline_evaluation_initializes_manifest_without_provider_calls(self) -> None:
+        output = self.root / "evaluation"
+        result = self._run("evaluate", "--cases", str(PROJECT_ROOT / "evals" / "research-quality"),
+            "--out-dir", str(output), "--model", "gpt-test", "--effort", "high", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["comparison_status"], "incomplete")
+        manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["effort"], "high")
+        comparison = json.loads((output / "comparison.json").read_text(encoding="utf-8"))
+        self.assertEqual(comparison["actual_provider_calls"], 0)
+
+    def test_live_evaluation_requires_all_three_explicit_limits(self) -> None:
+        result = self._run("evaluate", "--cases", str(PROJECT_ROOT / "evals" / "research-quality"),
+            "--out-dir", str(self.root / "evaluation"), "--model", "gpt-test", "--effort", "high", "--live", "--json")
+        self.assertEqual(result.returncode, 20)
+        self.assertIn("--max-session-usage-percent", json.loads(result.stderr)["reason"])
+        self.assertFalse((self.root / "evaluation").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,16 +6,24 @@ import argparse
 import json
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
+import time
 from typing import Any, Mapping
 
-from mathresearch.contracts.research_request import ResearchRequest, build_request_payload
+from mathresearch.adapters.base import WorkerInput
+from mathresearch.contracts.research_request import ResearchRequest, SourceInput, build_request_payload
 from mathresearch.contracts.validation import ValidationError
 from mathresearch.errors import (ExitCode, InvalidInvocationError, RunLockedError,
                                  RunStoreError)
 from .engine import answer_research_gate, initialize, run_research
 from .events import ResearchSnapshot
+from .prompts import PROMPT_VERSION, build_prompt
+from .contracts import result_schema, validate_result
+from .provider import check_provider_observation, create_research_provider, parse_provider_observation
+from mathresearch.worker_process import execute_worker
 from .store import load_research_status
+from .evaluation import EvaluationStore, load_cases, make_manifest, run_paired_trials
 
 
 _RESULT_KEYS = ("run_status", "answer_status", "model_calls_used", "tool_calls_used",
@@ -59,7 +67,172 @@ def _parser() -> argparse.ArgumentParser:
     respond.add_argument("--run-dir", required=True, type=Path)
     respond.add_argument("--response", required=True, type=Path, help="version-three gate response JSON")
     respond.add_argument("--json", action="store_true", dest="json_output")
+    evaluate = commands.add_parser("evaluate", help="prepare or inspect a paired quality evaluation")
+    evaluate.add_argument("--cases", required=True, type=Path)
+    evaluate.add_argument("--out-dir", required=True, type=Path)
+    evaluate.add_argument("--model", required=True)
+    evaluate.add_argument("--effort", choices=("high", "medium"), required=True,
+                          help="reasoning effort selected on the effort control; frozen per comparison")
+    evaluate.add_argument("--live", action="store_true", help="request provider-backed trials")
+    evaluate.add_argument("--max-provider-calls", type=int)
+    evaluate.add_argument("--max-wall-seconds", type=int)
+    evaluate.add_argument("--max-session-usage-percent", type=float)
+    evaluate.add_argument("--json", action="store_true", dest="json_output")
     return parser
+
+
+def _evaluate(arguments: argparse.Namespace) -> int:
+    if arguments.live:
+        if (arguments.max_provider_calls is None or arguments.max_wall_seconds is None or
+                arguments.max_session_usage_percent is None):
+            return _invalid("live evaluation requires explicit --max-provider-calls, --max-wall-seconds, and --max-session-usage-percent limits",
+                            json_output=arguments.json_output)
+        if (arguments.max_provider_calls > 240 or arguments.max_wall_seconds > 7200 or
+                arguments.max_session_usage_percent > 10 or arguments.max_provider_calls < 1 or
+                arguments.max_wall_seconds < 1 or arguments.max_session_usage_percent <= 0):
+            return _invalid("live caps cannot exceed Astra's 240 calls, 7200 seconds, and 10% session usage recommendation",
+                            json_output=arguments.json_output)
+    try:
+        cases, cases_hash, rubric_hash = load_cases(arguments.cases)
+        git = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[3],
+            capture_output=True, text=True, check=False, timeout=10)
+        git_sha = git.stdout.strip() if git.returncode == 0 else "unknown"
+        manifest = make_manifest(cases=cases, cases_hash=cases_hash, rubric_hash=rubric_hash,
+            model=arguments.model, effort=arguments.effort, git_sha=git_sha,
+            max_provider_calls=arguments.max_provider_calls if arguments.live else 240,
+            max_wall_seconds=arguments.max_wall_seconds if arguments.live else 7200,
+            max_session_usage_percent=arguments.max_session_usage_percent if arguments.live else 10)
+        store = EvaluationStore(arguments.out_dir, manifest)
+        run_result = None
+        if arguments.live:
+            run_result = run_paired_trials(cases, store,
+                trial_runner=lambda case, condition, inputs, trial_dir, timeout:
+                    _run_evaluation_trial(case, condition, inputs, trial_dir, timeout, manifest),
+                usage_checkpoint=lambda case_id, replicate, condition:
+                    _prompt_session_usage(case_id, replicate, condition,
+                        manifest["caps"]["max_session_usage_percent"]))
+        comparison = store.finalize(store.grades(),
+            deep_case_ids={case["id"] for case in cases if case["mode"] != "quick"},
+            quick_case_ids={case["id"] for case in cases if case["mode"] == "quick"})
+    except (OSError, ValidationError, ValueError, RuntimeError) as error:
+        return _invalid(f"evaluation preparation failed: {error}", json_output=arguments.json_output)
+    payload = {"comparison_status": comparison["comparison_status"],
+               "trial_count": comparison["trial_count"], "grade_count": comparison["grade_count"],
+               "manifest_path": str((arguments.out_dir / "manifest.json").resolve()),
+               "comparison_path": str((arguments.out_dir / "comparison.json").resolve()),
+               "reason": ("live trials stopped: " + str(run_result["stopped_reason"]) if run_result and run_result["stopped_reason"]
+                          else "live trial outputs require independent semantic grades" if arguments.live
+                          else "offline evaluation initialized; no provider calls were made")}
+    if run_result:
+        payload["trial_conditions_recorded"] = len(run_result["trial_conditions_recorded"])
+        payload["provider_calls_reserved"] = run_result["provider_calls_reserved"]
+        payload["wall_seconds_observed"] = run_result["wall_seconds_observed"]
+    _emit(payload, arguments.json_output)
+    return int(ExitCode.SUCCESS)
+
+
+def _prompt_session_usage(case_id: str, replicate: int, condition: str,
+                          maximum: float = 10.0) -> float | None:
+    print(f"Current Codex session usage percentage before {case_id}/{replicate}/{condition}? "
+          f"Enter a number below {maximum:g} to continue, or {maximum:g}+ to stop.",
+          file=sys.stderr, flush=True)
+    try:
+        raw = input().strip()
+        value = float(raw)
+    except (EOFError, ValueError):
+        return None
+    return value
+
+
+def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
+                          pair_inputs: Mapping[str, Any], trial_dir: Path,
+                          timeout_seconds: int, manifest: Mapping[str, Any]) -> dict[str, Any]:
+    sources = list(pair_inputs["source_inputs"])
+    payload = build_request_payload(run_id=f"eval-{case['id']}-r{pair_inputs['replicate']}-{condition}",
+        question=case["question"], objective=case["objective"], mode=case["mode"],
+        model=manifest["model"])
+    payload["provider"]["reasoning_effort"] = manifest["effort"]
+    payload["sources"] = sources
+    payload["capabilities"] = {"fetch_sources": False,
+        "math_checks": case["mode"] != "quick"}
+    payload["budgets"]["max_wall_seconds"] = min(payload["budgets"]["max_wall_seconds"], timeout_seconds)
+    payload["budgets"]["per_call_seconds"] = min(180, payload["budgets"]["max_wall_seconds"])
+    request = ResearchRequest.from_json(payload)
+    if condition == "pipeline":
+        run_dir = trial_dir / "run"
+        request_file = trial_dir / "request.json"
+        request_file.write_text(json.dumps(request.to_json(), ensure_ascii=False), encoding="utf-8")
+        initialize(request_file, run_dir)
+        snapshot = run_research(run_dir)
+        report_path = run_dir / "report.md"
+        report = report_path.read_text(encoding="utf-8") if report_path.is_file() else None
+        telemetry = list(snapshot.action_telemetry.values())
+        observed_models = {item.get("model_observed") for item in telemetry if item.get("model_observed")}
+        observed_efforts = {item.get("effort_observed") for item in telemetry if item.get("effort_observed")}
+        return {"status": "complete" if snapshot.status == "complete" else "failed",
+                "provider_calls": snapshot.model_calls_used, "report": report,
+                "cost_usd": None,
+                "observed_model": next(iter(observed_models)) if len(observed_models) == 1 else None,
+                "observed_effort": next(iter(observed_efforts)) if len(observed_efforts) == 1 else None,
+                "input_tokens": None, "output_tokens": None}
+
+    source_map = {item["id"]: SourceInput.from_json(item, field="evaluation.source",
+        fetch_sources=False).to_json() for item in sources}
+    packet = {"version": PROMPT_VERSION, "role": "answer", "action_id": "baseline-answer",
+        "objective": case["objective"], "question": case["question"], "goal": None,
+        "context": None, "constraints": [], "audience": "unspecified", "sources": source_map,
+        "tool_results": {}, "inputs": {}, "additional_user_input": [],
+        "output_schema": result_schema("answer")}
+    prompt = build_prompt("answer", packet)
+    preflight_started = time.monotonic()
+    try:
+        adapter = create_research_provider(request)
+    except (OSError, ValueError, RuntimeError) as error:
+        return {"status": "failed", "provider_calls": 0, "report": None,
+                "cost_usd": None, "observed_model": None, "observed_effort": None,
+                "error": f"provider preflight failed: {error}"}
+    worker_timeout = min(180, int(timeout_seconds - (time.monotonic() - preflight_started)))
+    if worker_timeout <= 0:
+        return {"status": "failed", "provider_calls": 0, "report": None,
+                "cost_usd": None, "observed_model": None, "observed_effort": None,
+                "error": "wall-time budget expired during provider preflight"}
+    scratch = trial_dir / "scratch"
+    scratch.mkdir(parents=True, exist_ok=True)
+    output = execute_worker(adapter, WorkerInput("baseline", prompt, result_schema("answer")),
+        scratch=scratch, timeout_seconds=worker_timeout)
+    observed = parse_provider_observation(output.stderr)
+    mismatch = check_provider_observation(request, observed)
+    report = None
+    status = "failed"
+    if output.outcome == "succeeded" and output.payload is not None and mismatch is None:
+        try:
+            result = validate_result("answer", output.payload)
+        except ValidationError as error:
+            return {"status": "failed", "provider_calls": 1, "report": None,
+                    "cost_usd": None, "observed_model": observed.get("model"),
+                    "observed_effort": observed.get("effort"),
+                    "input_tokens": None, "output_tokens": None,
+                    "error": f"baseline result schema error: {error}"}
+        lines = ["# Single-call baseline", "",
+            f"Requested model: `{manifest['model']}`; requested effort: `{manifest['effort']}`.",
+            "This is one unaudited answer. The paired pipeline received the same question, "
+            "source text, and evaluator-supplied check transcripts.", "", "## Inputs", ""]
+        for source in sources:
+            lines.extend([f"### {source['title']}", "", f"Source ID: `{source['id']}`", ""])
+            lines.extend("> " + line for line in source["text"].splitlines())
+            lines.append("")
+        lines.extend(["## Answer", "", f"Question status: `{result['question_status']}`", ""])
+        lines.extend("> " + line for line in result["answer"].splitlines())
+        report = "\n".join(lines) + "\n"
+        status = "complete"
+    if report is not None:
+        (trial_dir / "report.md").write_text(report, encoding="utf-8")
+    return {"status": status, "provider_calls": 0 if output.outcome == "launch_failed" else 1,
+            "report": report,
+            "cost_usd": None, "observed_model": observed.get("model"),
+            "observed_effort": observed.get("effort"),
+            "input_tokens": None, "output_tokens": None,
+            "error": mismatch or output.error}
 
 
 def _result(snapshot: ResearchSnapshot, run_dir: Path) -> dict[str, Any]:
@@ -172,6 +345,8 @@ def main(argv: list[str] | None = None) -> int:
         return _invalid(str(error), json_output="--json" in (argv or sys.argv[1:]))
     if arguments.research_command == "init":
         return _initialize(arguments)
+    if arguments.research_command == "evaluate":
+        return _evaluate(arguments)
     response: Mapping[str, Any] | None = None
     if arguments.research_command == "respond":
         try:
