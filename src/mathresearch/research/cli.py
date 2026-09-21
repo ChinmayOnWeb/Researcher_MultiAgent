@@ -73,6 +73,10 @@ def _parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--model", required=True)
     evaluate.add_argument("--effort", choices=("high", "medium"), required=True,
                           help="reasoning effort selected on the effort control; frozen per comparison")
+    evaluate.add_argument("--case-id", action="append",
+                          help="restrict this evaluation to a named case; repeat for a bounded smoke set")
+    evaluate.add_argument("--replicates", type=int, default=3,
+                          help="paired repetitions per selected case (default: 3)")
     evaluate.add_argument("--live", action="store_true", help="request provider-backed trials")
     evaluate.add_argument("--max-provider-calls", type=int)
     evaluate.add_argument("--max-wall-seconds", type=int)
@@ -94,7 +98,19 @@ def _evaluate(arguments: argparse.Namespace) -> int:
             return _invalid("live caps cannot exceed Astra's 240 calls, 7200 seconds, and 10 percentage-point session usage allowance",
                             json_output=arguments.json_output)
     try:
-        cases, cases_hash, rubric_hash = load_cases(arguments.cases)
+        all_cases, cases_hash, rubric_hash = load_cases(arguments.cases)
+        known_case_ids = {case["id"] for case in all_cases}
+        requested_case_ids = arguments.case_id
+        if requested_case_ids:
+            if len(set(requested_case_ids)) != len(requested_case_ids):
+                raise ValidationError("case_id", "must not contain duplicates")
+            unknown_case_ids = set(requested_case_ids) - known_case_ids
+            if unknown_case_ids:
+                raise ValidationError("case_id", f"unknown case IDs: {', '.join(sorted(unknown_case_ids))}")
+            selected_ids = set(requested_case_ids)
+            cases = [case for case in all_cases if case["id"] in selected_ids]
+        else:
+            cases = all_cases
         git = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[3],
             capture_output=True, text=True, check=False, timeout=10)
         git_sha = git.stdout.strip() if git.returncode == 0 else "unknown"
@@ -102,7 +118,8 @@ def _evaluate(arguments: argparse.Namespace) -> int:
             model=arguments.model, effort=arguments.effort, git_sha=git_sha,
             max_provider_calls=arguments.max_provider_calls if arguments.live else 240,
             max_wall_seconds=arguments.max_wall_seconds if arguments.live else 7200,
-            max_session_usage_delta_percent=arguments.max_session_usage_percent if arguments.live else 10)
+            max_session_usage_delta_percent=arguments.max_session_usage_percent if arguments.live else 10,
+            replicates=arguments.replicates)
         store = EvaluationStore(arguments.out_dir, manifest)
         run_result = None
         if arguments.live:

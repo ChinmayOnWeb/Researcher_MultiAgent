@@ -216,6 +216,27 @@ class ResearchCliIntegrationTests(unittest.TestCase):
         comparison = json.loads((output / "comparison.json").read_text(encoding="utf-8"))
         self.assertEqual(comparison["actual_provider_calls"], 0)
 
+    def test_evaluation_can_prepare_a_bounded_smoke_case_set(self) -> None:
+        output = self.root / "smoke-evaluation"
+        result = self._run("evaluate", "--cases", str(PROJECT_ROOT / "evals" / "research-quality"),
+            "--out-dir", str(output), "--model", "gpt-test", "--effort", "high",
+            "--case-id", "odd-sum", "--case-id", "bounded-search", "--case-id", "perfect-six",
+            "--replicates", "1", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["case_ids"], ["odd-sum", "perfect-six", "bounded-search"])
+        self.assertEqual(manifest["replicates"], 1)
+        self.assertEqual(len(manifest["ordering"]), 3)
+
+    def test_evaluation_rejects_unknown_smoke_case_without_creating_output(self) -> None:
+        output = self.root / "invalid-smoke-evaluation"
+        result = self._run("evaluate", "--cases", str(PROJECT_ROOT / "evals" / "research-quality"),
+            "--out-dir", str(output), "--model", "gpt-test", "--effort", "high",
+            "--case-id", "not-a-case", "--json")
+        self.assertEqual(result.returncode, 20)
+        self.assertIn("unknown case IDs", json.loads(result.stderr)["reason"])
+        self.assertFalse(output.exists())
+
     def test_live_evaluation_requires_all_three_explicit_limits(self) -> None:
         result = self._run("evaluate", "--cases", str(PROJECT_ROOT / "evals" / "research-quality"),
             "--out-dir", str(self.root / "evaluation"), "--model", "gpt-test", "--effort", "high", "--live", "--json")
