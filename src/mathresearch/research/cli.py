@@ -177,7 +177,10 @@ def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
     payload["provider"]["reasoning_effort"] = manifest["effort"]
     payload["sources"] = sources
     payload["capabilities"] = {"fetch_sources": False,
-        "math_checks": case["mode"] != "quick"}
+        "math_checks": bool(case.get("checks"))}
+    if not case.get("checks"):
+        payload["constraints"] = list(payload.get("constraints", [])) + [
+            "Do not propose computational checks; return an empty proposed_checks list."]
     payload["budgets"]["max_wall_seconds"] = min(payload["budgets"]["max_wall_seconds"], timeout_seconds)
     payload["budgets"]["per_call_seconds"] = min(180, payload["budgets"]["max_wall_seconds"])
     request = ResearchRequest.from_json(payload)
@@ -189,6 +192,17 @@ def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
         worker_tmp = trial_dir / "worker-tmp"
         worker_tmp.mkdir(parents=True, exist_ok=True)
         snapshot = run_research(run_dir, scratch_parent=worker_tmp)
+        # Smoke evaluations are noninteractive.  Preserve the gate as an
+        # explicit qualified decision so a missing independent certificate
+        # cannot silently become a verified result or stall the paired run.
+        if snapshot.status == "awaiting_human" and snapshot.pending_gate is not None:
+            gate = snapshot.pending_gate
+            response = {"schema_version": 3, "record_type": "research_gate_response",
+                        "gate_id": gate["gate_id"],
+                        "response_id": f"smoke-continue-{gate['gate_id']}",
+                        "decision": "continue_limited", "text": None, "sources": []}
+            snapshot = answer_research_gate(run_dir, response)
+            snapshot = run_research(run_dir, scratch_parent=worker_tmp)
         report_path = run_dir / "report.md"
         report = report_path.read_text(encoding="utf-8") if report_path.is_file() else None
         telemetry = [item for action_id, item in snapshot.action_telemetry.items()

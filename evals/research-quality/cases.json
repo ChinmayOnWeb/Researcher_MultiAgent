@@ -11,7 +11,7 @@
         {
           "kind": "synthetic_test_fixture",
           "id": "certificate-queens",
-          "text": "Independent finite certificate: a row-by-row bitmask enumeration for the 12x12 board with forbidden cells where (r+c) mod 5 = 0 found exactly 148 placements. One witness in zero-based row order is [1,3,6,8,10,4,0,5,11,9,7,2]. The enumeration rejects column and diagonal collisions and checks every row."
+          "text": "Reproducible certificate for the constrained queens count. Python pseudocode: n=12; dfs(row, cols, diag1, diag2, placement): if row==12: count += 1 and save first placement; otherwise loop c=0..11, skip when (row+c)%5==0 or c/row-c/row+c is occupied, then recurse. Running this exact row-by-row enumeration returns count=148 and first witness [1,3,6,8,10,4,0,5,11,9,7,2] in zero-based row order. Every row is assigned once, and every legal column/diagonal choice is explored."
         }
       ],
       "expected_obligations": [
@@ -37,7 +37,7 @@
         {
           "kind": "synthetic_test_fixture",
           "id": "certificate-algebraic",
-          "text": "Independent exact certificate: the minimal polynomial is x^8 - 40*x^6 + 352*x^4 - 960*x^2 + 576. Its eight real roots lie respectively in (-5.39,-5.38), (-2.56,-2.55), (-1.92,-1.91), (-0.92,-0.91), (0.91,0.92), (1.91,1.92), (2.55,2.56), (5.38,5.39). The polynomial is the product over all sign choices of x - (±sqrt(2) ±sqrt(3) ±sqrt(5))."
+          "text": "Reproducible exact certificate for the algebraic case. The conjugate product over all eight sign choices is P(x)=product_{e2,e3,e5 in {-1,1}}(x-e2*sqrt(2)-e3*sqrt(3)-e5*sqrt(5)) = x^8-40*x^6+352*x^4-960*x^2+576. Successive exact squaring shows the field degree is 8. A Sturm-count certificate gives one real root in each interval (-5.39,-5.38), (-2.56,-2.55), (-1.92,-1.91), (-0.92,-0.91), (0.91,0.92), (1.91,1.92), (2.55,2.56), (5.38,5.39), and zero roots between these intervals."
         }
       ],
       "expected_obligations": [
@@ -62,7 +62,7 @@
         {
           "kind": "synthetic_test_fixture",
           "id": "certificate-domino",
-          "text": "Independent exact certificate: a row-frontier bitmask recurrence for the 8x10 board with removed one-based cells (2,3), (3,7), (6,4), and (7,8) returns exactly 0 tilings. The recurrence fills the first unfilled cell in each row, branches right or down, and memoizes (row, frontier mask); an independent exact-cover enumeration also returns 0."
+          "text": "Reproducible exact certificate for the domino count. Use a row-frontier dynamic program keyed by (row, frontier_mask). At each row, fill the first unfilled nonremoved cell; branch to a horizontal domino when the next cell is available or a vertical domino when the cell below is available; memoize each state. For board 8x10 with removed one-based cells (2,3),(3,7),(6,4),(7,8), this recurrence returns 0. An independent exact-cover enumeration over the same cells also returns 0."
         }
       ],
       "expected_obligations": [
