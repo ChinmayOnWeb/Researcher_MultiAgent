@@ -32,7 +32,10 @@ def text(max_length: int) -> dict[str, Any]:
 _ID = text(64)
 _CITATION = obj({"source_id": _ID, "start": {"type": "integer", "minimum": 0},
                  "end": {"type": "integer", "minimum": 0}, "quote": text(1200)})
-_TOOL_ARGUMENTS = {"oneOf": [
+# Codex structured outputs reject nested ``oneOf`` schemas but accept the
+# equivalent ``anyOf`` form.  Semantic validation below still requires exactly
+# one branch to match, so this does not broaden the contract.
+_TOOL_ARGUMENTS = {"anyOf": [
     obj({"source_id": _ID}),
     obj({"n": {"type": "integer", "minimum": 0}}),
     obj({"lhs": arr({"type": "integer", "minimum": 0}, 13), "rhs": arr({"type": "integer", "minimum": 0}, 13),
@@ -73,9 +76,9 @@ def result_schema(role: str) -> dict[str, Any]:
 
 
 def _validate_shape(value: Any, schema: Mapping[str, Any], field: str) -> Any:
-    if "oneOf" in schema:
+    if "oneOf" in schema or "anyOf" in schema:
         matches: list[Any] = []
-        for candidate in schema["oneOf"]:
+        for candidate in schema.get("oneOf", schema.get("anyOf", [])):
             try:
                 matches.append(_validate_shape(value, candidate, field))
             except ValidationError:
