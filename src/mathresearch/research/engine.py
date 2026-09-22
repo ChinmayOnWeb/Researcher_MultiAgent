@@ -14,6 +14,7 @@ from typing import Any, Callable, Mapping, Protocol
 from mathresearch.adapters.base import Adapter, WorkerInput, WorkerOutput
 from mathresearch.contracts.validation import ValidationError
 from mathresearch.research.broker import run_broker
+from mathresearch.research.contracts import validate_result
 from mathresearch.research.events import ResearchEvent, ResearchSnapshot, canonical_json_bytes
 from mathresearch.research.prompts import build_packet, build_prompt
 from mathresearch.research.provider import (check_provider_observation, create_research_provider,
@@ -222,6 +223,36 @@ def _execute_action(run: LockedResearchRun, action: Mapping[str, Any], adapter: 
                     if mismatch is not None:
                         output = WorkerOutput("protocol_error", output.exit_code, output.stdout,
                             output.stderr, None, mismatch)
+                    elif output.outcome == "succeeded" and output.payload is not None:
+                        try:
+                            validate_result(action["role"], output.payload)
+                        except ValidationError as validation_error:
+                            repair_prompt = (prompt + "\n\nSTRUCTURAL REPAIR REQUIRED: your previous JSON failed validation: "
+                                + str(validation_error) + " Return the complete corrected JSON. Every depends_on entry must exactly match an ID in the same output array; use [] when there is no exact dependency. Do not add commentary.")
+                            first_stdout, first_stderr = output.stdout, output.stderr
+                            repair_remaining = max(1, min(_remaining(snapshot, now), snapshot.request.budgets["per_call_seconds"]))
+                            with tempfile.TemporaryDirectory(prefix="research-repair-", dir=str(scratch_parent),
+                                                              ignore_cleanup_errors=True) as repair_name:
+                                repaired = execute_worker(adapter, WorkerInput(
+                                    stage=f"{action['role']}:{action.get('branch') or ''}:repair",
+                                    prompt=repair_prompt, output_schema=packet["output_schema"]),
+                                    scratch=Path(repair_name), timeout_seconds=repair_remaining)
+                            repaired_stdout = first_stdout + b"\n[structural-repair]\n" + repaired.stdout
+                            repaired_stderr = first_stderr + b"\n[structural-repair]\n" + repaired.stderr
+                            if repaired.outcome == "succeeded" and repaired.payload is not None:
+                                try:
+                                    validate_result(action["role"], repaired.payload)
+                                    output = WorkerOutput(repaired.outcome, repaired.exit_code,
+                                        repaired_stdout, repaired_stderr, repaired.payload, None)
+                                except ValidationError as second_error:
+                                    output = WorkerOutput("protocol_error", repaired.exit_code,
+                                        repaired_stdout, repaired_stderr, None,
+                                        f"structural validation failed after repair: {second_error}")
+                            else:
+                                output = WorkerOutput("protocol_error", repaired.exit_code,
+                                    repaired_stdout, repaired_stderr, None,
+                                    f"structural repair provider outcome: {repaired.error or repaired.outcome}")
+                            observed = parse_provider_observation(repaired.stderr)
                 else:
                     output, _ = _tool_result(snapshot, action, scratch, remaining)
                     observed = {"model": None, "effort": None}

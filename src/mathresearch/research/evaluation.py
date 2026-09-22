@@ -659,7 +659,7 @@ def _run_paired_trials_locked(cases: Sequence[Mapping[str, Any]], store: Evaluat
                     case_id=case_id, replicate=replicate, condition=condition):
                 stopped_reason = "session_usage_cap_reached"
                 break
-            reserve_calls = 1 if condition == "baseline" else {"quick": 1, "deep": 7, "research": 11}[case["mode"]]
+            reserve_calls = 1 if condition == "baseline" else {"quick": 1, "deep": 8, "research": 12}[case["mode"]]
             try:
                 store.record_intent(case_id=case_id, replicate=replicate,
                     condition=condition, source_hash=pair_inputs["source_hash"],

@@ -19,8 +19,8 @@ from .validation import (
 SCHEMA_VERSION = 3
 _PROFILES = {
     "quick": (1, 0, 0, 1, 180),
-    "deep": (7, 6, 1, 2, 900),
-    "research": (11, 10, 2, 3, 1800),
+    "deep": (8, 6, 1, 2, 900),
+    "research": (12, 10, 2, 3, 1800),
 }
 _CAPABILITIES = {"fetch_sources", "math_checks"}
 

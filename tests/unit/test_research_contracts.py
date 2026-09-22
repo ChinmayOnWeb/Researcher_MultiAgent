@@ -77,7 +77,7 @@ class ResearchRequestTests(unittest.TestCase):
     def test_request_rejects_invalid_profile_inputs_with_stable_fields(self) -> None:
         cases = [
             ("budgets.max_model_calls", True, "budgets.max_model_calls"),
-            ("budgets.max_model_calls", 8, "budgets.max_model_calls"),
+            ("budgets.max_model_calls", 9, "budgets.max_model_calls"),
             ("capabilities.unknown", True, "capabilities"),
             ("provider.model", "", "provider.model"),
             ("stakes", "high", "unsupported_workflow"),
