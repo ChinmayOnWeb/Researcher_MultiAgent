@@ -594,7 +594,8 @@ def run_paired_trials(cases: Sequence[Mapping[str, Any]], store: EvaluationStore
         result = {"stopped_reason": "evaluation_error", "trial_conditions_recorded": []}
         try:
             result = _run_paired_trials_locked(cases, store, trial_runner=trial_runner,
-                usage_checkpoint=checkpoint, monotonic=active_clock)
+                usage_checkpoint=checkpoint if usage_checkpoint is not None else None,
+                monotonic=active_clock)
         except KeyboardInterrupt:
             result["stopped_reason"] = "user_cancelled"
         finally:
@@ -614,7 +615,7 @@ def run_paired_trials(cases: Sequence[Mapping[str, Any]], store: EvaluationStore
 
 
 def _run_paired_trials_locked(cases: Sequence[Mapping[str, Any]], store: EvaluationStore, *,
-                              trial_runner: Any, usage_checkpoint: Any,
+                              trial_runner: Any, usage_checkpoint: Any | None,
                               monotonic: Any) -> dict[str, Any]:
     """Run unstarted paired trials with persisted caps and human usage checks.
 
@@ -650,7 +651,7 @@ def _run_paired_trials_locked(cases: Sequence[Mapping[str, Any]], store: Evaluat
             if remaining <= preflight_reserve:
                 stopped_reason = "wall_time_cap_reached"
                 break
-            observed = usage_checkpoint(case_id, replicate, condition)
+            observed = usage_checkpoint(case_id, replicate, condition) if usage_checkpoint is not None else None
             if usage_checkpoint is not None and observed is None:
                 stopped_reason = "session_usage_checkpoint_unavailable"
                 break
