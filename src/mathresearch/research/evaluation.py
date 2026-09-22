@@ -689,7 +689,7 @@ def _run_paired_trials_locked(cases: Sequence[Mapping[str, Any]], store: Evaluat
                             "provider_outcome", "provider_exit_code"):
                     if key in raw:
                         trial[key] = raw[key]
-                if "error" in raw:
+                if raw.get("error") is not None:
                     trial["error"] = str(raw["error"])[:4000]
                 store.record_result(trial)
                 store.record_elapsed(elapsed)
