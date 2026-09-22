@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -29,7 +30,7 @@ def text(max_length: int) -> dict[str, Any]:
     return {"type": "string", "maxLength": max_length}
 
 
-_ID = text(64)
+_ID = text(64) | {"pattern": r"[a-z][a-z0-9-]{2,63}"}
 _CITATION = obj({"source_id": _ID, "start": {"type": "integer", "minimum": 0},
                  "end": {"type": "integer", "minimum": 0}, "quote": text(1200)})
 # Codex structured outputs reject nested ``oneOf`` schemas but accept the
@@ -37,7 +38,7 @@ _CITATION = obj({"source_id": _ID, "start": {"type": "integer", "minimum": 0},
 # one branch to match, so this does not broaden the contract.
 _TOOL_ARGUMENTS = {"anyOf": [
     obj({"source_id": _ID}),
-    obj({"n": {"type": "integer", "minimum": 0}}),
+    obj({"n": {"type": "integer", "minimum": 1}}),
     obj({"lhs": arr({"type": "integer", "minimum": 0}, 13), "rhs": arr({"type": "integer", "minimum": 0}, 13),
          "lo": {"type": "integer", "minimum": 0}, "hi": {"type": "integer", "minimum": 0}}),
     obj({"lo": {"type": "integer", "minimum": 0}, "hi": {"type": "integer", "minimum": 0},
@@ -102,6 +103,8 @@ def _validate_shape(value: Any, schema: Mapping[str, Any], field: str) -> Any:
         item = require_string(value, field)
         if "maxLength" in schema and len(item) > schema["maxLength"]:
             raise ValidationError(field, f"must be at most {schema['maxLength']} characters")
+        if "pattern" in schema and re.fullmatch(schema["pattern"], item) is None:
+            raise ValidationError(field, "must match the required identifier pattern")
         if "enum" in schema and item not in schema["enum"]:
             raise ValidationError(field, f"must be one of {', '.join(schema['enum'])}")
         return item
@@ -185,8 +188,6 @@ def _validate_draft(data: dict[str, Any], role: str) -> None:
     if role == "revise":
         if not data["change_log"]:
             raise ValidationError("change_log", "revise results require a change log")
-    elif data["change_log"]:
-        raise ValidationError("change_log", "is permitted only for revise results")
 
 
 def validate_audit_for_draft(audit: Mapping[str, Any], draft: Mapping[str, Any]) -> dict[str, Any]:

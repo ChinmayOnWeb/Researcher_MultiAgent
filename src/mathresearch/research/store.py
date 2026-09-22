@@ -146,7 +146,7 @@ class LockedResearchRun:
                after_event_persisted: Callable[[ResearchSnapshot], None] | None = None) -> ResearchSnapshot:
         candidate = self._events + (event,)
         try: snapshot = replay_research_events(candidate)
-        except ValueError as exc: raise RunStoreError("invalid research event append") from exc
+        except ValueError as exc: raise RunStoreError(f"invalid research event append: {exc}") from exc
         target = self.run_dir / "events" / f"{event.sequence:06d}.json"
         if target.exists(): raise RunCorruptError(self.run_dir, "immutable event already exists")
         _atomic_write_new(target, canonical_json_bytes(event.to_json()))
