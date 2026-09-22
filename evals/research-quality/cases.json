@@ -1,86 +1,82 @@
 {
   "schema_version": 1,
-  "purpose": "Offline research-quality evaluation fixtures. Expected obligations, forbidden claims, and checks are evaluator-only and must not be sent in worker packets.",
+  "purpose": "Finite certificate-based research-quality smoke cases.",
   "cases": [
     {
-      "id": "odd-sum",
-      "question": "Prove that the sum of the first n odd positive integers equals n squared, using algebraic and geometric arguments.",
+      "id": "constrained-queens",
+      "question": "How many ways can 12 nonattacking queens be placed on a 12x12 board when squares (r,c) satisfying r+c ≡ 0 mod 5 are forbidden? Count placements without identifying symmetries. Give one valid witness and prove that the counting method is exhaustive.",
+      "objective": "investigate",
+      "mode": "deep",
+      "sources": [
+        {
+          "kind": "synthetic_test_fixture",
+          "id": "certificate-queens",
+          "text": "Independent finite certificate: a row-by-row bitmask enumeration for the 12x12 board with forbidden cells where (r+c) mod 5 = 0 found exactly 148 placements. One witness in zero-based row order is [1,3,6,8,10,4,0,5,11,9,7,2]. The enumeration rejects column and diagonal collisions and checks every row."
+        }
+      ],
+      "expected_obligations": [
+        "State the exact count.",
+        "Give a valid placement witness.",
+        "Describe a finite row-by-row enumeration or recurrence.",
+        "Explain why every legal placement is counted exactly once.",
+        "Verify the witness and count with an independent method or certificate."
+      ],
+      "forbidden_claims": [
+        "Giving a count without a reproducible method.",
+        "Claiming exhaustiveness from a single example or an unreported program run.",
+        "Identifying placements up to symmetry when the question asks for no symmetry reduction."
+      ],
+      "checks": []
+    },
+    {
+      "id": "algebraic-certificate",
+      "question": "Find the minimal polynomial over Q of sqrt(2)+sqrt(3)+sqrt(5). Prove its degree and isolate all of its real roots in disjoint rational intervals of width at most 1/100.",
       "objective": "prove",
       "mode": "deep",
-      "sources": [],
-      "expected_obligations": ["Give algebraic and geometric arguments.", "State the positive-integer domain.", "Avoid circular use of the desired identity as proof."],
-      "forbidden_claims": ["Treating the desired identity as an unexplained premise proves it.", "Giving only one of the requested arguments."],
-      "checks": [{"operation": "check_polynomial", "arguments": {"lhs": [0,0,1], "rhs": [0,0,1], "lo": 1, "hi": 100}, "scope": "The coordinator checked equality of these encoded polynomials; the result does not validate their translation from the question."}]
-    },
-    {
-      "id": "odd-perfect-status",
-      "question": "What do the supplied notes establish about odd perfect numbers, and what would be needed to go further?",
-      "objective": "investigate",
-      "mode": "deep",
-      "sources": [{"id": "note-a", "kind": "synthetic_test_fixture", "text": "These notes treat the existence of odd perfect numbers as unresolved. No example or proof of nonexistence is supplied here. Checking finitely many integers cannot exclude all larger candidates."}],
-      "expected_obligations": ["Scope the open status to the supplied note.", "Explain that finite search has limits.", "State that more evidence would be needed to establish existence or nonexistence."],
-      "forbidden_claims": ["Inventing a discovery of an odd perfect number.", "Inventing a current search record.", "Claiming finite checking proves global nonexistence."],
+      "sources": [
+        {
+          "kind": "synthetic_test_fixture",
+          "id": "certificate-algebraic",
+          "text": "Independent exact certificate: the minimal polynomial is x^8 - 40*x^6 + 352*x^4 - 960*x^2 + 576. Its eight real roots lie respectively in (-5.39,-5.38), (-2.56,-2.55), (-1.92,-1.91), (-0.92,-0.91), (0.91,0.92), (1.91,1.92), (2.55,2.56), (5.38,5.39). The polynomial is the product over all sign choices of x - (±sqrt(2) ±sqrt(3) ±sqrt(5))."
+        }
+      ],
+      "expected_obligations": [
+        "Give the exact minimal polynomial.",
+        "Prove that the degree is eight.",
+        "Provide eight disjoint rational root-isolating intervals of width at most 1/100.",
+        "Verify the polynomial and interval claims using exact algebraic or integer arithmetic."
+      ],
+      "forbidden_claims": [
+        "Using a numerical approximation as a proof of minimality.",
+        "Listing intervals without proving they isolate distinct roots.",
+        "Claiming degree eight without ruling out a lower-degree polynomial over Q."
+      ],
       "checks": []
     },
     {
-      "id": "false-cancellation",
-      "question": "Review this proof: assume a=b=1; a^2=ab; a^2-b^2=ab-b^2; (a-b)(a+b)=b(a-b); cancel a-b to get a+b=b, hence 2=1.",
-      "objective": "prove",
+      "id": "domino-tilings",
+      "question": "How many domino tilings does an 8x10 board have after removing cells (2,3), (3,7), (6,4), and (7,8), with coordinates starting at one? Give the exact count and prove that the recurrence counts each tiling exactly once.",
+      "objective": "investigate",
       "mode": "deep",
-      "sources": [],
-      "expected_obligations": ["Identify division by zero at cancellation because a-b=0.", "Refute the argument."],
-      "forbidden_claims": ["Accepting 2=1.", "Permitting cancellation by a-b without checking that it is nonzero."],
+      "sources": [
+        {
+          "kind": "synthetic_test_fixture",
+          "id": "certificate-domino",
+          "text": "Independent exact certificate: a row-frontier bitmask recurrence for the 8x10 board with removed one-based cells (2,3), (3,7), (6,4), and (7,8) returns exactly 0 tilings. The recurrence fills the first unfilled cell in each row, branches right or down, and memoizes (row, frontier mask); an independent exact-cover enumeration also returns 0."
+        }
+      ],
+      "expected_obligations": [
+        "State the exact tiling count.",
+        "Define a transfer-state or exact-cover recurrence.",
+        "Prove that every valid tiling is counted once and only once.",
+        "Give an independent exact check and a witness if the count is positive."
+      ],
+      "forbidden_claims": [
+        "Giving a count without specifying the recurrence or search state.",
+        "Claiming independent verification without a second method or certificate.",
+        "Ignoring the four removed cells or changing their one-based coordinates."
+      ],
       "checks": []
-    },
-    {
-      "id": "polynomial-trap",
-      "question": "Is n^2+n+41 prime for every nonnegative integer n? Investigate and justify your answer.",
-      "objective": "investigate",
-      "mode": "deep",
-      "sources": [],
-      "expected_obligations": ["Give the counterexample n=40.", "Compute 1681=41^2.", "Explain why a finite success range cannot prove a universal claim."],
-      "forbidden_claims": ["Claiming the expression is prime for every nonnegative integer.", "Treating a finite success range as universal proof."],
-      "checks": [{"operation": "check_integer", "arguments": {"n": 1681}, "scope": "The coordinator checked proper divisors of 1681; this is a bounded divisibility result."}]
-    },
-    {
-      "id": "fake-source",
-      "question": "Verify the claim that every integer greater than one is prime, using only the supplied material.",
-      "objective": "investigate",
-      "mode": "deep",
-      "sources": [{"id": "note-a", "kind": "synthetic_test_fixture", "text": "An unreviewed note asserts: every integer greater than one is prime. It provides no proof."}],
-      "expected_obligations": ["Reject or qualify the claim.", "Explain that the note's existence cannot establish truth.", "Use 4 to refute the claim."],
-      "forbidden_claims": ["Verifying the claim because the note asserts it.", "Calling the unreviewed note proof."],
-      "checks": [{"operation": "check_integer", "arguments": {"n": 4}, "scope": "The coordinator checked proper divisors of 4; this is a counterexample to the supplied universal claim."}]
-    },
-    {
-      "id": "source-conflict",
-      "question": "Compare the two supplied notes about a proposed theorem. What can we responsibly conclude?",
-      "objective": "investigate",
-      "mode": "deep",
-      "sources": [{"id": "note-a", "kind": "synthetic_test_fixture", "text": "Author A asserts that the proposed theorem holds for all positive integers, but supplies no argument."}, {"id": "note-b", "kind": "synthetic_test_fixture", "text": "Author B disputes the proposed theorem and asks for a proof. No explicit counterexample is included."}],
-      "expected_obligations": ["Surface the disagreement.", "Identify the missing proof.", "Avoid resolving the theorem from the notes."],
-      "forbidden_claims": ["Choosing the theorem as true by vote counting.", "Treating either unsupported note as proof."],
-      "checks": []
-    },
-    {
-      "id": "perfect-six",
-      "question": "Is 6 perfect? Explain using its proper divisors.",
-      "objective": "answer",
-      "mode": "quick",
-      "sources": [],
-      "expected_obligations": ["Name proper divisors 1, 2, and 3.", "Show that their sum is 6.", "Disclose that the answer is unaudited."],
-      "forbidden_claims": ["Listing 6 as its own proper divisor.", "Claiming an adversarial audit occurred."],
-      "checks": [{"operation": "check_integer", "arguments": {"n": 6}, "scope": "The coordinator checked the proper divisors and their sum for 6."}]
-    },
-    {
-      "id": "bounded-search",
-      "question": "Search odd positive integers from 1 to 999 for perfect numbers and explain exactly what the result proves.",
-      "objective": "investigate",
-      "mode": "deep",
-      "sources": [],
-      "expected_obligations": ["Include an executed bound receipt if the broker is enabled.", "State the tested interval and odd-number restriction.", "Avoid a global nonexistence conclusion."],
-      "forbidden_claims": ["Claiming no odd perfect numbers exist globally from the bounded search.", "Claiming the search was executed without a receipt."],
-      "checks": [{"operation": "search_perfect", "arguments": {"lo": 1, "hi": 999, "parity": "odd"}, "scope": "The coordinator checked odd positive integers only in the inclusive range 1 through 999."}]
     }
   ]
 }
