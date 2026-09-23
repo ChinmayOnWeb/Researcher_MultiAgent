@@ -14,8 +14,9 @@ from typing import Any, Callable, Mapping, Protocol
 from mathresearch.adapters.base import Adapter, WorkerInput, WorkerOutput
 from mathresearch.contracts.validation import ValidationError
 from mathresearch.research.broker import run_broker
-from mathresearch.research.contracts import validate_result
+from mathresearch.research.contracts import validate_audit_for_draft, validate_result
 from mathresearch.research.events import ResearchEvent, ResearchSnapshot, canonical_json_bytes
+from mathresearch.research.provenance import check_provenance
 from mathresearch.research.prompts import build_packet, build_prompt
 from mathresearch.research.provider import (check_provider_observation, create_research_provider,
     parse_provider_observation, provider_configuration)
@@ -226,6 +227,12 @@ def _execute_action(run: LockedResearchRun, action: Mapping[str, Any], adapter: 
                     elif output.outcome == "succeeded" and output.payload is not None:
                         try:
                             validate_result(action["role"], output.payload)
+                            if action["role"] == "audit":
+                                validate_audit_for_draft(output.payload, packet["inputs"]["draft"])
+                            if action["role"] in {"answer", "branch", "synthesize", "revise"}:
+                                issues = check_provenance(output.payload, packet["sources"], packet["tool_results"])
+                                if issues:
+                                    raise ValidationError("provenance", "; ".join(issues))
                         except ValidationError as validation_error:
                             repair_prompt = (prompt + "\n\nSTRUCTURAL REPAIR REQUIRED: your previous JSON failed validation: "
                                 + str(validation_error) + " Return the complete corrected JSON. Every depends_on entry must exactly match an ID in the same output array; use [] when there is no exact dependency. Do not add commentary.")
@@ -242,6 +249,12 @@ def _execute_action(run: LockedResearchRun, action: Mapping[str, Any], adapter: 
                             if repaired.outcome == "succeeded" and repaired.payload is not None:
                                 try:
                                     validate_result(action["role"], repaired.payload)
+                                    if action["role"] == "audit":
+                                        validate_audit_for_draft(repaired.payload, packet["inputs"]["draft"])
+                                    if action["role"] in {"answer", "branch", "synthesize", "revise"}:
+                                        issues = check_provenance(repaired.payload, packet["sources"], packet["tool_results"])
+                                        if issues:
+                                            raise ValidationError("provenance", "; ".join(issues))
                                     output = WorkerOutput(repaired.outcome, repaired.exit_code,
                                         repaired_stdout, repaired_stderr, repaired.payload, None)
                                 except ValidationError as second_error:

@@ -32,3 +32,9 @@ An initial live smoke was attempted in `runs/research-quality-smoke-20260921/` a
 
 Verification: the constrained-queens live smoke completed with `gpt-5.6-terra` at medium effort, 7 provider calls, and no quota prompt. The evaluation correctly returned `comparison_status=incomplete` because live outputs still require independent semantic grades. Contract tests pass (15 tests); engine tests remain blocked by the environment's Windows temporary-directory permission failure, not by an assertion failure. Structural repair was reviewed and the successful smoke confirms the surrounding pipeline still reaches a complete pipeline trial.
 
+## Final certificate smoke attempt
+
+- The fresh aggregate run `runs/research-quality-smoke-complete-20260922/` completed all three pipeline trials with Terra medium: constrained queens (7 calls), algebraic certificate (9 calls, using the Research wall budget in a temporary fixture), and domino tilings (5 calls). All three produced terminal reports; the algebraic and domino reports retained qualified uncertainty where the supplied certificate did not prove every mathematical premise.
+- The aggregate evaluator stopped before the domino baseline because its reservation ledger reserved the full worst-case pipeline budgets. A separate domino Research retry completed the pipeline in 9 calls, but the paired retry's provider later exited unsuccessfully before a baseline was recorded. Therefore this is a completed pipeline smoke, not a complete paired comparison.
+- The repair path now validates worker provenance and audit completeness before accepting an action. Invalid citation spans and incomplete audit coverage receive one bounded repair attempt; unknown proof references remain hard failures after the repair limit.
+
