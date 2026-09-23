@@ -75,6 +75,8 @@ def _parser() -> argparse.ArgumentParser:
                           help="reasoning effort selected on the effort control; frozen per comparison")
     evaluate.add_argument("--case-id", action="append",
                           help="restrict this evaluation to a named case; repeat for a bounded smoke set")
+    evaluate.add_argument("--condition", choices=("paired", "baseline", "pipeline"), default="paired",
+                          help="run paired evaluation, or only one condition")
     evaluate.add_argument("--replicates", type=int, default=3,
                           help="paired repetitions per selected case (default: 3)")
     evaluate.add_argument("--live", action="store_true", help="request provider-backed trials")
@@ -118,6 +120,9 @@ def _evaluate(arguments: argparse.Namespace) -> int:
             max_wall_seconds=arguments.max_wall_seconds if arguments.live else 7200,
             max_session_usage_delta_percent=arguments.max_session_usage_percent or 10,
             replicates=arguments.replicates)
+        if arguments.condition != "paired":
+            manifest["ordering"] = [dict(pair, conditions=[arguments.condition])
+                                     for pair in manifest["ordering"]]
         store = EvaluationStore(arguments.out_dir, manifest)
         run_result = None
         if arguments.live:
