@@ -1,0 +1,3 @@
+# Ten-proof-style diagnostic rubric (evaluator only)
+
+This file and `expected_obligations`/`forbidden_claims` in cases.json must never enter worker packets. The case questions, supplied sources, model, and effort must be identical within each pair. Grade each output on correctness, completeness of the requested proof, coverage of edge cases, honest evidence and uncertainty, and avoidance of the forbidden claim. Record terminal answer status separately from semantic mathematical quality. Count actual local Codex sessions, including structural repair retries, separately from action-level telemetry. Do not equate model audit with formal verification. One replicate per style gives diagnostic examples, not a general performance estimate.

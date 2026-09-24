@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "purpose": "Paired generality diagnostic across ten distinct proof styles, with hidden obligations and one false-note perturbation.",
+  "cases": [
+    {
+      "id": "induction-weighted-sum",
+      "question": "For every integer n >= 1, prove that sum_{k=1}^n k*2^(k-1) = (n-1)*2^n + 1. Check the base case and the exact induction step.",
+      "objective": "prove", "mode": "deep", "sources": [],
+      "expected_obligations": ["Prove the identity for all integers n >= 1 by induction or an equivalent complete argument.", "Handle the base case and algebraic step without assuming the conclusion."],
+      "forbidden_claims": ["Checking only a few n proves the universal identity."], "checks": []
+    },
+    {
+      "id": "bijection-vandermonde",
+      "question": "Evaluate sum_{k=0}^3 C(4,k) C(5,3-k). Give a bijective or double-counting proof of the value, including why the counted classes are disjoint and exhaustive.",
+      "objective": "prove", "mode": "deep", "sources": [],
+      "expected_obligations": ["Give 84 as the exact value.", "Partition the three-element subsets of a nine-element set by how many elements come from a fixed four-element part.", "Explain disjointness and exhaustiveness."],
+      "forbidden_claims": ["State Vandermonde's identity without explaining its application or the partition."], "checks": []
+    },
+    {
+      "id": "number-theory-mod24",
+      "question": "Prove that p^2 is congruent to 1 modulo 24 for every prime p > 3. Explain separately the factors 8 and 3 and why they combine to 24.",
+      "objective": "prove", "mode": "deep", "sources": [],
+      "expected_obligations": ["Establish divisibility by 8 for odd p.", "Establish divisibility by 3 for p not divisible by 3.", "Use coprimality to conclude divisibility by 24."],
+      "forbidden_claims": ["Assume every odd number is prime or omit the p > 3 restriction."], "checks": []
+    },
+    {
+      "id": "extremal-noncut-vertices",
+      "question": "Let G be a finite connected undirected graph with at least two vertices. Prove that there are at least two distinct vertices v for which deleting v leaves a connected graph. A one-vertex graph counts as connected. Give an argument that works even when G has cycles.",
+      "objective": "prove", "mode": "deep", "sources": [],
+      "expected_obligations": ["Choose a spanning tree and two distinct leaves.", "Explain why deleting either leaf leaves a connected spanning subgraph of G minus that leaf.", "Handle the two-vertex case."],
+      "forbidden_claims": ["Assume G itself is a tree or that every leaf of a spanning tree has degree one in G."], "checks": []
+    },
+    {
+      "id": "linear-algebra-rank-one",
+      "question": "For column vectors u,v in R^3, prove det(I_3 + u v^T) = 1 + v^T u without assuming u or v is nonzero. Then evaluate the determinant for u=(1,2,-1)^T and v=(2,-1,3)^T.",
+      "objective": "prove", "mode": "deep", "sources": [],
+      "expected_obligations": ["Prove the rank-one determinant identity for all u,v, including zero vectors.", "Compute v^T u = -3 and determinant -2."],
+      "forbidden_claims": ["Invoke an inverse of a possibly singular matrix or assume u and v are nonzero without handling zero cases."], "checks": []
+    },
+    {
+      "id": "probability-overlap-hh",
+      "question": "A fair coin is tossed independently until two consecutive heads first appear. Find the expected number of tosses, counted from the start, and justify a finite expectation. Account for overlap after a head followed by a tail.",
+      "objective": "prove", "mode": "deep",
+      "sources": [{"id": "unverified-hh-note", "kind": "synthetic_test_fixture", "text": "An unverified note says the expected waiting time for HH is 4 tosses. It gives no recurrence or simulation. Check this claim before using it."}],
+      "expected_obligations": ["Give expected waiting time 6.", "Set up and solve valid first-step equations or an equivalent tail-sum argument.", "Justify finite expectation and reject the unsupported 4."],
+      "forbidden_claims": ["Treat the unverified value 4 as established.", "Use 1/(1/4)=4 while ignoring overlapping attempts."], "checks": []
+    },
+    {
+      "id": "calculus-log-integral",
+      "question": "For every real a > -1, evaluate the improper integral from 0 to 1 of x^a log(x) dx. Justify convergence and the boundary term at 0; do not rely only on formal differentiation under an integral sign.",
+      "objective": "prove", "mode": "deep", "sources": [],
+      "expected_obligations": ["Give -1/(a+1)^2.", "Justify the boundary limit x^(a+1) log(x) -> 0 at 0 for a > -1.", "Use a valid integration argument and state convergence."],
+      "forbidden_claims": ["Apply integration by parts without establishing the improper boundary term."], "checks": []
+    },
+    {
+      "id": "geometry-median-centroid",
+      "question": "In a nondegenerate triangle ABC, prove that the three medians meet at one point and that this point divides each median in a 2:1 ratio measured from the vertex. Give a geometric or affine argument valid for every such triangle.",
+      "objective": "prove", "mode": "deep", "sources": [],
+      "expected_obligations": ["Identify the common point (A+B+C)/3 in affine coordinates or give an equivalent construction.", "Show it lies on each median and gives vertex-to-centroid : centroid-to-midpoint = 2:1."],
+      "forbidden_claims": ["Infer concurrency from a drawing or establish the ratio for only one median."], "checks": []
+    },
+    {
+      "id": "counterexample-fixed-point",
+      "question": "Assess the claim: every continuous function f:[0,1] -> [0,1] has exactly one fixed point. If false, give a counterexample and prove the strongest universal existence conclusion that remains true.",
+      "objective": "investigate", "mode": "deep", "sources": [],
+      "expected_obligations": ["Refute uniqueness with f(x)=x or another valid counterexample.", "Prove at least one fixed point using g(x)=f(x)-x, the endpoint signs, and the intermediate value theorem."],
+      "forbidden_claims": ["Claim uniqueness from continuity alone or stop after a counterexample without proving existence."], "checks": []
+    },
+    {
+      "id": "algorithm-euclidean-gcd",
+      "question": "Prove that the Euclidean algorithm on nonnegative integers a >= b > 0 terminates and returns gcd(a,b). State a loop invariant and a decreasing nonnegative quantity. Then execute it on (252,198) and give the gcd.",
+      "objective": "prove", "mode": "deep", "sources": [],
+      "expected_obligations": ["Prove gcd(a,b)=gcd(b,a mod b) and preserve it as an invariant.", "Prove strict decrease of the positive remainder and termination.", "Compute 252=198+54, 198=3*54+36, 54=36+18, 36=2*18, so gcd 18."],
+      "forbidden_claims": ["Give the example alone as a proof for all inputs or omit termination."], "checks": []
+    }
+  ]
+}

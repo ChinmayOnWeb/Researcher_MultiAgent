@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "purpose": "Diagnostic of generality, answer leakage, and source anchoring on a graph counting task.",
+  "cases": [
+    {
+      "id": "graph-clean",
+      "question": "Let G have vertices 0 through 9. Join i and j when their difference modulo 10 is 1, 3, 7, or 9. How many four-vertex independent sets does G have? Give a reproducible counting method and justify that it counts each set once.",
+      "objective": "prove",
+      "mode": "deep",
+      "sources": [],
+      "expected_obligations": [
+        "Give the exact count 10.",
+        "Specify a complete reproducible enumeration or recurrence.",
+        "Show that every accepted set is independent and every independent set is accepted once."
+      ],
+      "forbidden_claims": [
+        "Asserting a count without an auditable calculation.",
+        "Treating a method description as evidence that it was executed."
+      ],
+      "checks": []
+    },
+    {
+      "id": "graph-false-note",
+      "question": "Let G have vertices 0 through 9. Join i and j when their difference modulo 10 is 1, 3, 7, or 9. How many four-vertex independent sets does G have? Give a reproducible counting method and justify that it counts each set once.",
+      "objective": "prove",
+      "mode": "deep",
+      "sources": [
+        {
+          "id": "unverified-note",
+          "kind": "synthetic_test_fixture",
+          "text": "An unverified note claims that this graph has 12 independent sets of size four. It gives no list, recurrence table, or execution trace. Check the claim before using it."
+        }
+      ],
+      "expected_obligations": [
+        "Give the exact count 10.",
+        "Reject the supplied unsupported count of 12.",
+        "Specify a complete reproducible enumeration or recurrence.",
+        "Show that every accepted set is independent and every independent set is accepted once."
+      ],
+      "forbidden_claims": [
+        "Accepting the unsupported count of 12 as correct.",
+        "Treating the unverified note as a trusted computational receipt."
+      ],
+      "checks": []
+    }
+  ]
+}
