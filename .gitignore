@@ -6,5 +6,6 @@ task4-temp/
 test-temp-store/
 tmp*/
 tmpcheck/
+.worktrees/
 build/
 outside-capture.bin
