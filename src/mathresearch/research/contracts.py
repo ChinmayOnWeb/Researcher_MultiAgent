@@ -84,17 +84,20 @@ _AUDIT_V3 = obj({"checks": arr(obj({"claim_id": _ID, "verdict": enum(("supported
     "tool_requests": _AUDIT["properties"]["tool_requests"],
     "recommended_action": _AUDIT["properties"]["recommended_action"]})
 
+OUTPUT_SCHEMA_VERSION = "research-output-v2"
+VALIDATOR_VERSION = "research-validator-v5"
+
 
 def result_schema(role: str, prompt_version: str = "research-v2") -> dict[str, Any]:
     """Return a defensive provider schema for one worker role."""
-    if prompt_version not in {"research-v1", "research-v2", "research-v3", "research-v4", "research-v5"}:
+    if prompt_version not in {"research-v1", "research-v2", "research-v3", "research-v4", "research-v5", "research-v6", "research-v7", "research-v8"}:
         raise ValidationError("prompt_version", "is unsupported")
     if role in {"answer", "branch", "synthesize", "revise"}:
-        return copy.deepcopy(_DRAFT_V3 if prompt_version in {"research-v3", "research-v4", "research-v5"} else _DRAFT)
+        return copy.deepcopy(_DRAFT_V3 if prompt_version in {"research-v3", "research-v4", "research-v5", "research-v6", "research-v7", "research-v8"} else _DRAFT)
     if role == "frame":
         return copy.deepcopy(_FRAME)
     if role == "audit":
-        return copy.deepcopy(_AUDIT_V3 if prompt_version in {"research-v3", "research-v4", "research-v5"} else _AUDIT)
+        return copy.deepcopy(_AUDIT_V3 if prompt_version in {"research-v3", "research-v4", "research-v5", "research-v6", "research-v7", "research-v8"} else _AUDIT)
     raise ValidationError("role", "must be a research worker role")
 
 
@@ -113,7 +116,14 @@ def _validate_shape(value: Any, schema: Mapping[str, Any], field: str) -> Any:
     if kind == "object":
         data = require_object(value, field)
         expected = set(schema["properties"])
-        require_exact_fields(data, field, expected)
+        missing = sorted(expected - set(data))
+        if missing:
+            raise ValidationError(f"{field}.{missing[0]}", "required field is missing",
+                                  details={"category": "missing_field"})
+        unknown = sorted(set(data) - expected)
+        if unknown:
+            raise ValidationError(f"{field}.{unknown[0]}", "field is not in the schema",
+                                  details={"category": "unknown_field", "found": unknown[0]})
         return {key: _validate_shape(data[key], schema["properties"][key], f"{field}.{key}") for key in schema["properties"]}
     if kind == "array":
         if not isinstance(value, list):
@@ -158,8 +168,13 @@ def _validate_tool_request(request: dict[str, Any], field: str) -> None:
 
 def _unique_ids(items: list[dict[str, Any]], field: str) -> set[str]:
     ids = [require_identifier(item["id"], f"{field}[{index}].id") for index, item in enumerate(items)]
-    if len(ids) != len(set(ids)):
-        raise ValidationError(field, "IDs must be unique")
+    seen: set[str] = set()
+    for index, item_id in enumerate(ids):
+        if item_id in seen:
+            raise ValidationError(f"{field}[{index}].id", "identifiers must be unique (duplicate identifier)", details={
+                "category": "duplicate_id", "bad_reference": item_id,
+                "expected_namespace": f"unique {field} IDs", "available_ids": sorted(seen)})
+        seen.add(item_id)
     return set(ids)
 
 
@@ -176,7 +191,10 @@ def _assert_dag(items: list[dict[str, Any]], field: str, namespace: str) -> None
     visiting: set[str] = set(); done: set[str] = set()
     def visit(item_id: str) -> None:
         if item_id in visiting:
-            raise ValidationError(field, "dependencies must form a DAG")
+            item_index = next(index for index, item in enumerate(items) if item["id"] == item_id)
+            raise ValidationError(f"{field}[{item_index}].depends_on", "dependencies must form a DAG (circular dependency)",
+                details={"category": "circular_dependency", "bad_reference": item_id,
+                         "expected_namespace": namespace, "available_ids": sorted(by_id)})
         if item_id in done:
             return
         visiting.add(item_id)
@@ -217,7 +235,7 @@ def _validate_draft(data: dict[str, Any], role: str, prompt_version: str) -> Non
             if dependency not in claim_ids:
                 raise _reference_error(prefix + f".depends_on[{reference_index}]", dependency,
                                        "claims", claim_ids)
-        if prompt_version in {"research-v3", "research-v4", "research-v5"}:
+        if prompt_version in {"research-v3", "research-v4", "research-v5", "research-v6", "research-v7", "research-v8"}:
             basis = claim["basis"]
             if not claim["basis_reference"]:
                 raise ValidationError(prefix + ".basis_reference", "must explain the claimed basis")
@@ -253,11 +271,12 @@ def _validate_draft(data: dict[str, Any], role: str, prompt_version: str) -> Non
                 if any(not depends_on_scope(step_id) for step_id in claim["discharged_by_step_ids"]):
                     raise ValidationError(prefix + ".discharged_by_step_ids",
                         "each discharge step must depend on a proof step in the assumption's scope")
-                if not any(set(claim["discharged_by_step_ids"]) <= set(other["step_ids"])
-                           for other in supported_by):
-                    raise ValidationError(prefix + ".discharged_by_step_ids",
-                        "must be included in a dependent deduction claim's proof steps")
-            elif claim["scope_step_ids"] or claim["discharged_by_step_ids"]:
+            if basis == "local_assumption" and prompt_version != "research-v8" and not any(
+                    set(claim["discharged_by_step_ids"]) <= set(other["step_ids"])
+                    for other in supported_by):
+                raise ValidationError(prefix + ".discharged_by_step_ids",
+                    "must be included in step_ids of a deduction that directly depends on this local assumption")
+            elif basis != "local_assumption" and (claim["scope_step_ids"] or claim["discharged_by_step_ids"]):
                 raise ValidationError(prefix + ".basis", "only local assumptions may declare scope or discharge steps")
             if basis == "standard_result" and (claim["kind"] != "deduction" or not claim["step_ids"]):
                 raise ValidationError(prefix + ".basis", "standard_result requires a deduction with application steps")
@@ -304,7 +323,7 @@ def validate_audit_for_draft(audit: Mapping[str, Any], draft: Mapping[str, Any],
     for index, check in enumerate(checked_audit["checks"]):
         if any(step_id not in step_ids for step_id in check["checked_step_ids"]):
             raise ValidationError(f"checks[{index}].checked_step_ids", "must refer to current draft proof steps")
-        if version in {"research-v3", "research-v4", "research-v5"}:
+        if version in {"research-v3", "research-v4", "research-v5", "research-v6", "research-v7", "research-v8"}:
             claim = next(item for item in checked_draft["claims"] if item["id"] == check["claim_id"])
             basis = claim["basis"]
             verdict = check["basis_verdict"]
@@ -341,7 +360,7 @@ def validate_action(payload: Mapping[str, Any]) -> dict[str, Any]:
             raise ValidationError("action.role", "must be a worker role")
         worker_payload = require_object(data["payload"], "action.payload")
         require_exact_fields(worker_payload, "action.payload", {"prompt_version"})
-        if worker_payload["prompt_version"] not in {"research-v1", "research-v2", "research-v3", "research-v4", "research-v5"}:
+        if worker_payload["prompt_version"] not in {"research-v1", "research-v2", "research-v3", "research-v4", "research-v5", "research-v6", "research-v7", "research-v8"}:
             raise ValidationError("action.payload.prompt_version", "is unsupported")
         checked_payload: dict[str, Any] = {"prompt_version": worker_payload["prompt_version"]}
     else:

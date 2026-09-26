@@ -58,12 +58,15 @@ class ExecuteWorkerTests(unittest.TestCase):
         self.assertEqual(output.payload, {"ok": True})
         self.assertEqual(output.stdout, b"diagnostic\r\n" if sys.platform == "win32" else b"diagnostic\n")
 
-    def test_invalid_result_protocol_is_failed_and_keeps_diagnostics(self) -> None:
-        self.write_child("import pathlib; pathlib.Path('result.json').write_text('not-json'); print('not-json')\n")
+    def test_invalid_result_protocol_is_captured_for_repair_and_keeps_diagnostics(self) -> None:
+        source = "import pathlib; pathlib.Path('result.json').write_text(" + repr('{"answer":"readable", }') + "); print('not-json')\n"
+        self.write_child(source)
         output = execute_worker(_StubAdapter(self.script), self.task(), scratch=self.scratch, timeout_seconds=5)
-        self.assertEqual(output.outcome, "failed")
+        self.assertEqual(output.outcome, "protocol_error")
         self.assertIsNone(output.payload)
         self.assertEqual(output.stdout.strip(), b"not-json")
+        self.assertEqual(output.raw_result, b'{"answer":"readable", }')
+        self.assertEqual(output.semantic_artifact, "readable")
         self.assertIn("protocol", output.error or "")
 
     def test_nonzero_exit_does_not_decode_result(self) -> None:
@@ -72,6 +75,7 @@ class ExecuteWorkerTests(unittest.TestCase):
         self.assertEqual(output.outcome, "failed")
         self.assertEqual(output.exit_code, 7)
         self.assertIsNone(output.payload)
+        self.assertEqual(output.raw_result, b'{"ok":true}')
 
     def test_timeout_is_reported(self) -> None:
         self.write_child("import time; print('started', flush=True); time.sleep(30)\n")

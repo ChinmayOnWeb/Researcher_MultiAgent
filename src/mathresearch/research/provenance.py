@@ -10,9 +10,9 @@ from mathresearch.contracts.validation import ValidationError
 from mathresearch.research.contracts import validate_audit_for_draft, validate_result
 
 
-def _validated_draft(draft: Mapping[str, Any]) -> dict[str, Any]:
+def _validated_draft(draft: Mapping[str, Any], prompt_version: str | None = None) -> dict[str, Any]:
     errors = []
-    version = ("research-v3" if isinstance(draft, Mapping) and isinstance(draft.get("claims"), list)
+    version = prompt_version or ("research-v3" if isinstance(draft, Mapping) and isinstance(draft.get("claims"), list)
                and draft["claims"] and all(isinstance(claim, Mapping) and "basis" in claim
                                            for claim in draft["claims"]) else "research-v2")
     for role in ("answer", "branch", "synthesize", "revise"):
@@ -82,14 +82,15 @@ def check_provenance(draft: Mapping[str, Any], sources: Mapping[str, Any],
                      tool_results: Mapping[str, Any], *,
                      audit: Mapping[str, Any] | None = None,
                      audit_sources: Mapping[str, Any] | None = None,
-                     audit_tool_results: Mapping[str, Any] | None = None) -> list[str]:
+                     audit_tool_results: Mapping[str, Any] | None = None,
+                     prompt_version: str | None = None) -> list[str]:
     """Return deterministic contract issues for unknown or mismatched evidence references.
 
     Passing means IDs, offsets, quotes, hashes, and receipt status are mechanically
     consistent. It does not establish source truth or semantic entailment.
     """
     issues: list[str] = []
-    version = ("research-v3" if isinstance(draft, Mapping) and isinstance(draft.get("claims"), list)
+    version = prompt_version or ("research-v3" if isinstance(draft, Mapping) and isinstance(draft.get("claims"), list)
                and draft["claims"] and isinstance(draft["claims"][0], Mapping)
                and "basis" in draft["claims"][0] else "research-v2")
     errors = []
@@ -150,13 +151,14 @@ def assess(draft: Mapping[str, Any], sources: Mapping[str, Any],
            audit_sources: Mapping[str, Any] | None = None,
            audit_tool_results: Mapping[str, Any] | None = None,
            run_tool_results: Mapping[str, Any] | None = None,
-           objective: str = "investigate", question: str = "", goal: str = "") -> dict[str, Any]:
+           objective: str = "investigate", question: str = "", goal: str = "",
+           prompt_version: str | None = None) -> dict[str, Any]:
     """Derive a qualified, deterministic assessment from validated records.
 
     Semantic entailment remains model-reviewed; this function only combines the
     audit labels with mechanical evidence integrity and dependency status.
     """
-    version = ("research-v3" if isinstance(draft, Mapping) and isinstance(draft.get("claims"), list)
+    version = prompt_version or ("research-v3" if isinstance(draft, Mapping) and isinstance(draft.get("claims"), list)
                and draft["claims"] and isinstance(draft["claims"][0], Mapping)
                and "basis" in draft["claims"][0] else "research-v2")
     errors = []
@@ -170,7 +172,8 @@ def assess(draft: Mapping[str, Any], sources: Mapping[str, Any],
     if checked is None:
         raise errors[0]
     issues = check_provenance(checked, sources, tool_results, audit=audit,
-                              audit_sources=audit_sources, audit_tool_results=audit_tool_results)
+                              audit_sources=audit_sources, audit_tool_results=audit_tool_results,
+                              prompt_version=version)
     if any(issue in {"invalid_draft", "invalid_audit", "invalid_evidence_catalog", "invalid_audit_evidence_catalog"}
            for issue in issues):
         return {"answer_status": "unverified", "provenance_status": "invalid",
@@ -180,7 +183,7 @@ def assess(draft: Mapping[str, Any], sources: Mapping[str, Any],
                 for claim in checked["claims"]], "unresolved": list(dict.fromkeys(issues))}
     checked_audit = None
     if audit is not None and "invalid_audit" not in issues:
-        audit_version = ("research-v3" if version == "research-v3" and isinstance(audit, Mapping)
+        audit_version = (version if version in {"research-v3", "research-v4", "research-v5", "research-v6", "research-v7", "research-v8"} and isinstance(audit, Mapping)
             and audit.get("checks") and isinstance(audit["checks"][0], Mapping)
             and "basis_verdict" in audit["checks"][0] else "research-v2")
         checked_audit = validate_audit_for_draft(audit, checked, prompt_version=audit_version)
@@ -259,10 +262,15 @@ def assess(draft: Mapping[str, Any], sources: Mapping[str, Any],
                 elif basis == "additional_assumption": result = "conditional"
                 elif basis == "local_assumption":
                     dependents = [other for other in checked["claims"] if claim_id in other["depends_on"] and other["kind"] == "deduction"]
-                    discharged = bool(dependents) and all(checks[other["id"]]["verdict"] == "supported" and
-                        checks[other["id"]]["basis_verdict"] == "applicable" and
-                        set(claim["discharged_by_step_ids"]) <= set(checks[other["id"]]["checked_step_ids"])
-                        for other in dependents)
+                    if version == "research-v8":
+                        discharged = (check["verdict"] == "supported" and
+                            check["basis_verdict"] == "applicable" and
+                            set(claim["discharged_by_step_ids"]) <= set(check["checked_step_ids"]))
+                    else:
+                        discharged = bool(dependents) and all(checks[other["id"]]["verdict"] == "supported" and
+                            checks[other["id"]]["basis_verdict"] == "applicable" and
+                            set(claim["discharged_by_step_ids"]) <= set(checks[other["id"]]["checked_step_ids"])
+                            for other in dependents)
                     result = "discharged_local_assumption" if discharged else "conditional"
                 elif basis == "question_premise":
                     reference = claim["basis_reference"].strip()

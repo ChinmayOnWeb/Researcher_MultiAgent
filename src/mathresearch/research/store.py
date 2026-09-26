@@ -105,13 +105,18 @@ def _check_layout(run_dir: Path, snapshot: ResearchSnapshot, events: tuple[Resea
                 for attempt_dir in _checked_children(attempts_dir, run_dir, files=set(), directories=action_attempts).values():
                     body = attempt_intents[attempt_dir.name]
                     if body["action_id"] != action_dir.name: raise RunCorruptError(run_dir, "attempt belongs to another action")
-                    _checked_children(attempt_dir, run_dir, files={"stdout.bin", "stderr.log"}, directories=set(), immutable={"stdout.bin", "stderr.log"})
+                    _checked_children(attempt_dir, run_dir, files={"stdout.bin", "stderr.log", "result.bin"}, directories=set(), immutable={"stdout.bin", "stderr.log", "result.bin"})
                     if attempt_dir.name in attempt_finished:
                         outcome = attempt_finished[attempt_dir.name]
                         for filename, digest_key in (("stdout.bin", "stdout_sha256"), ("stderr.log", "stderr_sha256")):
                             capture = attempt_dir / filename
                             if not capture.exists() or hashlib.sha256(capture.read_bytes()).hexdigest() != outcome[digest_key]:
                                 raise RunCorruptError(run_dir, "provider attempt capture digest mismatch")
+                        if outcome.get("raw_result_sha256") is not None:
+                            capture = attempt_dir / "result.bin"
+                            if (not capture.exists() or hashlib.sha256(capture.read_bytes()).hexdigest() !=
+                                    outcome["raw_result_sha256"]):
+                                raise RunCorruptError(run_dir, "raw provider result capture digest mismatch")
     successful_tools = {action_id: outcome for action_id, outcome in finished.items() if outcome["outcome"] == "succeeded" and snapshot.actions[action_id]["kind"] == "tool"}
     if (run_dir / "tools").exists():
         for action_id, directory in _checked_children(run_dir / "tools", run_dir, files=set(), directories=set(successful_tools)).items():
@@ -130,6 +135,14 @@ def _materialize(run_dir: Path, snapshot: ResearchSnapshot, events: tuple[Resear
     if not request.exists(): _atomic_write_replace(request, canonical_json_bytes(init))
     for item in events:
         if item.event_type == "provider_attempt_finished":
+            attempt_dir = (run_dir / "actions" / item.body["action_id"] / "attempts" /
+                           item.body["attempt_id"])
+            attempt_dir.mkdir(parents=True, exist_ok=True)
+            # The exact provider result is an immutable capture, separate
+            # from stdout/stderr diagnostics and durable before cleanup.
+            result_capture = attempt_dir / "result.bin"
+            if not result_capture.exists():
+                _atomic_write_new(result_capture, b"")
             continue
         elif item.event_type == "provider_attempt_intended":
             directory = run_dir / "actions" / item.body["action_id"] / "attempts" / item.body["attempt_id"]
@@ -181,13 +194,13 @@ class LockedResearchRun:
         directory = self.run_dir / "actions" / action_id; directory.mkdir(parents=True, exist_ok=True)
         _atomic_write_new(directory / name, data); return hashlib.sha256(data).hexdigest()
     def write_attempt_capture(self, action_id: str, attempt_id: str, name: str, data: bytes) -> str:
-        if name not in {"stdout.bin", "stderr.log"} or attempt_id not in self._snapshot.attempts:
+        if name not in {"stdout.bin", "stderr.log", "result.bin"} or attempt_id not in self._snapshot.attempts:
             # During execution the attempt finish event is appended after captures,
             # so authorize against its durable intent in the event journal.
             authorized = any(item.event_type == "provider_attempt_intended" and
                              item.body["attempt_id"] == attempt_id and item.body["action_id"] == action_id
                              for item in self._events)
-            if name not in {"stdout.bin", "stderr.log"} or not authorized:
+            if name not in {"stdout.bin", "stderr.log", "result.bin"} or not authorized:
                 raise RunStoreError("unsafe provider attempt capture target")
         directory = self.run_dir / "actions" / action_id / "attempts" / attempt_id
         directory.mkdir(parents=True, exist_ok=True)

@@ -10,6 +10,7 @@ import subprocess
 from typing import Any, Mapping
 
 from .base import LaunchSpec, WorkerInput
+from mathresearch.structured_output import parse_json_object
 
 
 class CodexAdapter:
@@ -148,24 +149,6 @@ class CodexAdapter:
         if result_bytes is None:
             raise ValueError("Codex did not produce a dedicated final result")
         try:
-            text = result_bytes.decode("utf-8")
-            decoder = json.JSONDecoder(object_pairs_hook=_reject_duplicates, parse_constant=_reject_constant)
-            value, end = decoder.raw_decode(text)
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            raise ValueError("Codex final result is not strict JSON") from exc
-        if text[end:].strip() or not isinstance(value, dict):
-            raise ValueError("Codex final result must be one JSON object")
-        return value
-
-
-def _reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate JSON key: {key}")
-        result[key] = value
-    return result
-
-
-def _reject_constant(value: str) -> None:
-    raise ValueError(f"non-finite JSON constant: {value}")
+            return dict(parse_json_object(result_bytes).value)
+        except (UnicodeDecodeError, ValueError, TypeError) as exc:
+            raise ValueError(f"Codex final result is invalid structured output: {exc}") from exc

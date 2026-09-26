@@ -31,6 +31,9 @@ class WorkerOutput:
     payload: Mapping[str, Any] | None
     error: str | None
     validation_details: Mapping[str, Any] | None = None
+    raw_result: bytes | None = None
+    protocol_status: str = "unavailable"
+    semantic_artifact: str | None = None
 
 
 class Adapter(Protocol):

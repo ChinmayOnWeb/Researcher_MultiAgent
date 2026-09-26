@@ -61,7 +61,8 @@ def assess_latest(snapshot: ResearchSnapshot) -> dict[str, Any]:
                   audit_sources=audit_sources, audit_tool_results=audit_tool_results,
                   run_tool_results=snapshot.tool_results,
                   objective=snapshot.request.objective, question=snapshot.request.question,
-                  goal=snapshot.request.goal or "")
+                  goal=snapshot.request.goal or "",
+                  prompt_version=draft_action.get("payload", {}).get("prompt_version"))
     return _with_assessment_identity(snapshot, draft_action, draft, audit_pair if audit is not None else None, assessment)
 
 
@@ -144,7 +145,7 @@ def _worker(snapshot: ResearchSnapshot, role: str, reason: str, *, branch: str |
                        blockers=combined + ["model call budget exhausted"])
     action = {"id": _action_id(snapshot), "kind": "worker", "role": role, "branch": branch,
               "round": min(2, round_number), "dependencies": dependencies or [],
-              "payload": {"prompt_version": "research-v5"}}
+              "payload": {"prompt_version": "research-v7"}}
     return Decision("worker", reason, action,
                     _details(snapshot, selected=selected, audit_id=audit_id,
                              blockers=combined, round_number=round_number))

@@ -225,7 +225,7 @@ class ResearchEngineTests(unittest.TestCase):
             attempts = list(final.attempts.values())
             self.assertEqual(attempts[0]["attempt_kind"], "initial")
             self.assertEqual(attempts[1]["attempt_kind"], "structural_repair")
-            self.assertEqual(attempts[1]["prompt_version"], "structural-repair-v3")
+            self.assertEqual(attempts[1]["prompt_version"], "structural-repair-v4")
             self.assertEqual(attempts[1]["parent_attempt_id"], attempts[0]["attempt_id"])
             self.assertGreater(attempts[1]["input_bytes"], attempts[0]["input_bytes"])
             review = attempts[1]["repair_review"]
@@ -234,8 +234,36 @@ class ResearchEngineTests(unittest.TestCase):
             self.assertEqual(review["diff"][0]["path"], "/unrecognized")
             self.assertIn("diff", review["change_explanation"])
             self.assertEqual(stages, ["frame:", "frame:"])
-            self.assertTrue((run_dir / "actions" / "a0001" / "attempts" /
-                             attempts[0]["attempt_id"] / "stdout.bin").is_file())
+            attempt_dir = run_dir / "actions" / "a0001" / "attempts" / attempts[0]["attempt_id"]
+            self.assertTrue((attempt_dir / "stdout.bin").is_file())
+            self.assertTrue((attempt_dir / "result.bin").is_file())
+            self.assertEqual((attempt_dir / "result.bin").read_bytes(),
+                             json.dumps(invalid, ensure_ascii=False, sort_keys=True,
+                                        separators=(",", ":")).encode("utf-8"))
+
+    def test_failed_structural_repair_is_bounded_and_preserves_semantic_answer(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            def configure(payload: dict[str, Any]) -> None:
+                payload["budgets"]["max_model_calls"] = 2
+                payload["budgets"]["max_repairs"] = 1
+            run_dir = self._run(root, configure=configure)
+            invalid = scripted_result("frame:")
+            invalid["answer"] = "Readable answer, despite a malformed contract."
+            invalid["unrecognized"] = "force repair"
+            still_invalid = dict(invalid)
+            stages: list[str] = []
+            marker = root / "child-invocations.txt"
+            outputs = {"frame:": [invalid, still_invalid]}
+            def factory(request: ResearchRequest, *, recorded_config: Mapping[str, Any] | None):
+                return ScriptedAdapter(request, marker, stages, outputs)
+            final = run_research(run_dir, provider_factory=factory)
+            self.assertEqual(final.model_calls_used, 2)
+            self.assertEqual(len(final.attempts), 2)
+            self.assertEqual(stages, ["frame:", "frame:"])
+            self.assertTrue(any(item.get("semantic_artifact") ==
+                "Readable answer, despite a malformed contract."
+                for item in final.outcomes.values()))
 
     def test_structural_repair_does_not_exceed_one_attempt_budget(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

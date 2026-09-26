@@ -127,7 +127,7 @@ class ResearchPromptTests(unittest.TestCase):
         self.assertIn('"answer":"original"', prompt)
         self.assertIn('"expected_namespace":"claims"', prompt)
         self.assertIn("change_log", prompt)
-        self.assertIn("do not delete required support", prompt)
+        self.assertIn("or delete semantic content", prompt)
 
     def test_role_packets_have_exact_inputs_and_matching_schema(self) -> None:
         state = snapshot()
@@ -171,6 +171,8 @@ class ResearchPromptTests(unittest.TestCase):
         packet = build_packet(snapshot().request, snapshot(), action("answer-one", "answer"))
         prompt = build_prompt("answer", packet)
         self.assertIn("additional_assumption and local_assumption use assumption", prompt)
+        self.assertIn("the question and goal are not source records", prompt)
+        self.assertIn("use kind=assumption", prompt)
         self.assertIn("represent the temporary negated conclusion as a local_assumption", prompt)
 
     def test_standard_results_are_named_and_audited_by_application(self) -> None:
@@ -182,11 +184,25 @@ class ResearchPromptTests(unittest.TestCase):
         self.assertIn("verify the named theorem is stated accurately, its hypotheses are met", audit_prompt)
         self.assertIn("do not require a proof of the theorem itself", audit_prompt)
         self.assertIn("Only local_assumption claims may have nonempty scope_step_ids", draft_prompt)
-        self.assertIn("dependent deduction claim that concludes the reductio must include each discharge step", draft_prompt)
+        self.assertIn("Do not require intermediate deduction claims to list a later discharge step", draft_prompt)
 
     def test_new_prompt_version_keeps_v3_basis_contract_shape(self) -> None:
-        self.assertEqual(PROMPT_VERSION, "research-v5")
+        self.assertEqual(PROMPT_VERSION, "research-v8")
         self.assertEqual(result_schema("answer", PROMPT_VERSION), result_schema("answer", "research-v3"))
+
+    def test_v7_packets_remain_readable_after_reductio_rule_change(self) -> None:
+        state = snapshot()
+        packet = build_packet(state.request, state, action("answer-one", "answer"))
+        packet["version"] = "research-v7"
+        packet["output_schema"] = result_schema("answer", "research-v7")
+        self.assertIn("research-v7", build_prompt("answer", packet))
+
+    def test_v5_packets_remain_readable_after_prompt_upgrade(self) -> None:
+        state = snapshot()
+        packet = build_packet(state.request, state, action("answer-one", "answer"))
+        packet["version"] = "research-v5"
+        packet["output_schema"] = result_schema("answer", "research-v5")
+        self.assertIn("research-v5", build_prompt("answer", packet))
 
     def test_source_injection_remains_packet_data_without_permissions(self) -> None:
         packet = build_packet(snapshot().request, snapshot(), action("answer-one", "answer"))

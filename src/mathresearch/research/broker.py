@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 import sys
@@ -15,6 +14,7 @@ from mathresearch.research.events import canonical_json_bytes
 from mathresearch.research.implementation import IMPLEMENTATION_VERSION
 from mathresearch.research.math_checks import perform_math_check, validate_math_arguments
 from mathresearch.research.sources import validate_captured_source
+from mathresearch.structured_output import parse_json_object
 from mathresearch.worker_process import execute_worker
 
 
@@ -96,13 +96,9 @@ class BrokerAdapter:
     def decode(self, stdout: bytes, result_bytes: bytes | None) -> Mapping[str, Any]:
         if result_bytes is not None: raise ValueError("broker worker must write its receipt to stdout")
         try:
-            text = stdout.decode("utf-8")
-            value, end = json.JSONDecoder(object_pairs_hook=_reject_duplicates,
-                parse_constant=_reject_constant).raw_decode(text)
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            raise ValueError("broker output must be strict JSON") from exc
-        if text[end:].strip() or not isinstance(value, dict): raise ValueError("broker output must contain one JSON object")
-        return value
+            return dict(parse_json_object(stdout).value)
+        except (UnicodeDecodeError, ValueError, TypeError) as exc:
+            raise ValueError(f"broker output is invalid structured output: {exc}") from exc
 
 
 def run_broker(*, tool_id: str, request: Mapping[str, Any], capabilities: Mapping[str, bool],
@@ -151,15 +147,3 @@ def _failed_receipt(tool_id: str, request: Mapping[str, Any], scope: str, error:
     return {"tool_id": tool_id, "request": dict(request), "status": "failed", "result": None,
             "error": error[:4000] or "broker_failed", "scope": scope[:4000],
             "implementation_version": IMPLEMENTATION_VERSION}
-
-
-def _reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result = {}
-    for key, value in pairs:
-        if key in result: raise ValueError("duplicate JSON key")
-        result[key] = value
-    return result
-
-
-def _reject_constant(value: str) -> None:
-    raise ValueError(f"non-finite JSON value: {value}")

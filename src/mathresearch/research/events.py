@@ -143,12 +143,17 @@ def _validate_body(kind: str, payload: Any) -> dict[str, Any]:
     if kind == "research_initialized":
         require_exact_fields(data, kind, {"request"}); request = ResearchRequest.from_json(data["request"]); return {"request": request.to_json()}
     if kind == "provider_configured":
-        keys = {"executable", "version", "model_requested", "effort_requested", "control_argv", "prompt_version"}; require_exact_fields(data, kind, keys)
+        keys = {"executable", "version", "model_requested", "effort_requested", "control_argv", "prompt_version"}
+        version_keys = {"schema_version", "validator_version"}
+        if frozenset(data) not in {frozenset(keys), frozenset(keys | version_keys)}:
+            require_exact_fields(data, kind, keys | version_keys)
         if not isinstance(data["control_argv"], list): raise ValidationError("control_argv", "must be an array")
         checked = {key: require_string(data[key], f"{kind}.{key}") for key in keys if key != "control_argv"} | {"control_argv": [require_string(x, "control_argv[]") for x in data["control_argv"]]}
         if not checked["executable"] or not checked["version"]: raise ValidationError(kind, "executable and version must be nonempty")
         if checked["effort_requested"] not in {"medium", "high"}: raise ValidationError("effort_requested", "must be medium or high")
-        if checked["prompt_version"] not in {"research-v1", "research-v2", "research-v3", "research-v4", "research-v5"}: raise ValidationError("prompt_version", "is unsupported")
+        if checked["prompt_version"] not in {"research-v1", "research-v2", "research-v3", "research-v4", "research-v5", "research-v6", "research-v7", "research-v8"}: raise ValidationError("prompt_version", "is unsupported")
+        if version_keys.issubset(data):
+            checked.update({key: require_string(data[key], key) for key in version_keys})
         return checked
     if kind == "decision_recorded":
         require_exact_fields(data, kind, {"decision_id", "kind", "reason_code", "action", "details"})
@@ -164,7 +169,10 @@ def _validate_body(kind: str, payload: Any) -> dict[str, Any]:
         packet = require_object(data["packet"], "packet")
         return {"action_id": require_identifier(data["action_id"], "action_id"), "packet": dict(packet), "packet_sha256": _sha(data["packet_sha256"], "packet_sha256")}
     if kind == "action_finished":
-        keys = {"action_id", "outcome", "exit_code", "stdout_sha256", "stderr_sha256", "result", "error", "telemetry"}; require_exact_fields(data, kind, keys)
+        keys = {"action_id", "outcome", "exit_code", "stdout_sha256", "stderr_sha256", "result", "error", "telemetry"}
+        semantic_keys = {"protocol_status", "semantic_available", "semantic_artifact"}
+        if frozenset(data) not in {frozenset(keys), frozenset(keys | semantic_keys)}:
+            require_exact_fields(data, kind, keys | semantic_keys)
         outcome = require_string(data["outcome"], "outcome")
         if outcome not in {"succeeded", "failed", "timed_out", "cancelled", "launch_failed", "protocol_error"}: raise ValidationError("outcome", "is invalid")
         exit_code = data["exit_code"]
@@ -173,19 +181,34 @@ def _validate_body(kind: str, payload: Any) -> dict[str, Any]:
         if outcome == "succeeded":
             if exit_code != 0 or result is None or error is not None: raise ValidationError("action_finished", "success requires exit code zero, result, and null error")
         elif result is not None: raise ValidationError("result", "must be null for a non-success outcome")
-        return {"action_id": require_identifier(data["action_id"], "action_id"), "outcome": outcome, "exit_code": exit_code, "stdout_sha256": _sha(data["stdout_sha256"], "stdout_sha256"), "stderr_sha256": _sha(data["stderr_sha256"], "stderr_sha256"), "result": result, "error": error, "telemetry": _telemetry(data["telemetry"])}
+        checked = {"action_id": require_identifier(data["action_id"], "action_id"), "outcome": outcome, "exit_code": exit_code, "stdout_sha256": _sha(data["stdout_sha256"], "stdout_sha256"), "stderr_sha256": _sha(data["stderr_sha256"], "stderr_sha256"), "result": result, "error": error, "telemetry": _telemetry(data["telemetry"])}
+        if semantic_keys.issubset(data):
+            status = require_string(data["protocol_status"], "protocol_status")
+            if status not in {"valid", "invalid", "unavailable"}: raise ValidationError("protocol_status", "is invalid")
+            if not isinstance(data["semantic_available"], bool): raise ValidationError("semantic_available", "must be a boolean")
+            artifact = data["semantic_artifact"]
+            if artifact is not None and (not isinstance(artifact, str) or len(artifact) > 12000):
+                raise ValidationError("semantic_artifact", "must be text up to 12000 characters or null")
+            if data["semantic_available"] != bool(artifact): raise ValidationError("semantic_available", "must match semantic_artifact presence")
+            if outcome == "succeeded" and status != "valid": raise ValidationError("protocol_status", "successful action requires valid protocol")
+            checked.update({"protocol_status": status, "semantic_available": data["semantic_available"], "semantic_artifact": artifact})
+        return checked
     if kind == "provider_attempt_intended":
         keys = {"attempt_id", "action_id", "parent_attempt_id", "attempt_kind", "retry_reason", "prompt_version", "prompt_sha256", "schema_sha256", "input_bytes"}
-        require_exact_fields(data, kind, keys)
+        version_keys = {"schema_version", "validator_version"}
+        repair_key = {"repair_errors"}
+        if frozenset(data) not in {frozenset(keys), frozenset(keys | version_keys),
+                                   frozenset(keys | version_keys | repair_key)}:
+            require_exact_fields(data, kind, keys | version_keys | repair_key)
         parent = None if data["parent_attempt_id"] is None else require_identifier(
             data["parent_attempt_id"], "parent_attempt_id")
         attempt_kind = require_string(data["attempt_kind"], "attempt_kind")
         if attempt_kind not in {"initial", "structural_repair"}:
             raise ValidationError("attempt_kind", "is invalid")
         prompt_version = require_string(data["prompt_version"], "prompt_version")
-        if prompt_version not in {"research-v1", "research-v2", "research-v3", "research-v4", "research-v5", "structural-repair-v2", "structural-repair-v3"}:
+        if prompt_version not in {"research-v1", "research-v2", "research-v3", "research-v4", "research-v5", "research-v6", "research-v7", "research-v8", "structural-repair-v2", "structural-repair-v3", "structural-repair-v4"}:
             raise ValidationError("prompt_version", "is invalid")
-        return {"attempt_id": require_identifier(data["attempt_id"], "attempt_id"),
+        checked = {"attempt_id": require_identifier(data["attempt_id"], "attempt_id"),
                 "action_id": require_identifier(data["action_id"], "action_id"),
                 "parent_attempt_id": parent, "attempt_kind": attempt_kind,
                 "retry_reason": _nullable_string(data["retry_reason"], "retry_reason"),
@@ -193,11 +216,32 @@ def _validate_body(kind: str, payload: Any) -> dict[str, Any]:
                 "prompt_sha256": _sha(data["prompt_sha256"], "prompt_sha256"),
                 "schema_sha256": _sha(data["schema_sha256"], "schema_sha256"),
                 "input_bytes": require_nonnegative_integer(data["input_bytes"], "input_bytes")}
+        if version_keys.issubset(data):
+            checked.update({key: require_string(data[key], key) for key in version_keys})
+            if checked["schema_version"] not in {"research-output-v1", "research-output-v2"}:
+                raise ValidationError("schema_version", "is unsupported")
+            if checked["validator_version"] not in {"research-validator-v1", "research-validator-v2", "research-validator-v3", "research-validator-v4", "research-validator-v5"}:
+                raise ValidationError("validator_version", "is unsupported")
+        if "repair_errors" in data:
+            repair_errors = data["repair_errors"]
+            if not isinstance(repair_errors, list) or len(repair_errors) > 16:
+                raise ValidationError("repair_errors", "must contain at most 16 validation issues")
+            checked["repair_errors"] = [dict(require_object(issue, f"repair_errors[{index}]"))
+                for index, issue in enumerate(repair_errors)]
+            if checked["attempt_kind"] == "structural_repair" and not checked["repair_errors"]:
+                raise ValidationError("repair_errors", "structural repair requires its parent's validation errors")
+        return checked
     if kind == "provider_attempt_finished":
         keys = {"attempt_id", "outcome", "exit_code", "stdout_sha256", "stderr_sha256", "error", "telemetry", "failure_class", "session_id_marker_count"}
-        # repair_review was added within v4; accept earlier v4 journal entries.
-        if frozenset(data) not in {frozenset(keys), frozenset(keys | {"repair_review"})}:
-            require_exact_fields(data, kind, keys | {"repair_review"})
+        # Keep old v4 histories readable while requiring all semantic-capture
+        # fields together on newly written attempts.
+        capture_keys = {"raw_result_sha256", "protocol_status", "semantic_available",
+                        "semantic_artifact", "validation_errors"}
+        if frozenset(data) not in {
+                frozenset(keys), frozenset(keys | {"repair_review"}),
+                frozenset(keys | capture_keys),
+                frozenset(keys | capture_keys | {"repair_review"})}:
+            require_exact_fields(data, kind, keys | capture_keys | {"repair_review"})
         outcome = require_string(data["outcome"], "outcome")
         if outcome not in {"succeeded", "failed", "timed_out", "cancelled", "launch_failed", "protocol_error"}:
             raise ValidationError("outcome", "is invalid")
@@ -229,7 +273,7 @@ def _validate_body(kind: str, payload: Any) -> dict[str, Any]:
             except (TypeError, ValueError) as exc:
                 raise ValidationError("repair_review", "must contain JSON-compatible values") from exc
             review = dict(review)
-        return {"attempt_id": require_identifier(data["attempt_id"], "attempt_id"),
+        checked = {"attempt_id": require_identifier(data["attempt_id"], "attempt_id"),
                 "outcome": outcome, "exit_code": exit_code,
                 "stdout_sha256": _sha(data["stdout_sha256"], "stdout_sha256"),
                 "stderr_sha256": _sha(data["stderr_sha256"], "stderr_sha256"),
@@ -237,6 +281,36 @@ def _validate_body(kind: str, payload: Any) -> dict[str, Any]:
                 "telemetry": _telemetry(data["telemetry"]), "failure_class": failure_class,
                 "session_id_marker_count": require_nonnegative_integer(data["session_id_marker_count"], "session_id_marker_count"),
                 "repair_review": review}
+        if capture_keys.issubset(data):
+            status = require_string(data["protocol_status"], "protocol_status")
+            if status not in {"valid", "invalid", "unavailable"}: raise ValidationError("protocol_status", "is invalid")
+            if not isinstance(data["semantic_available"], bool): raise ValidationError("semantic_available", "must be a boolean")
+            artifact = data["semantic_artifact"]
+            if artifact is not None and (not isinstance(artifact, str) or len(artifact) > 12000):
+                raise ValidationError("semantic_artifact", "must be text up to 12000 characters or null")
+            if data["semantic_available"] != bool(artifact): raise ValidationError("semantic_available", "must match semantic_artifact presence")
+            errors = data["validation_errors"]
+            if not isinstance(errors, list) or len(errors) > 16:
+                raise ValidationError("validation_errors", "must be an array of at most 16 issues")
+            issue_keys = {"path", "category", "found", "expected_namespace", "available_ids",
+                          "explanation", "deterministic_repair_permitted", "model_repair_permitted"}
+            normalized_errors = []
+            for index, raw_issue in enumerate(errors):
+                issue = require_object(raw_issue, f"validation_errors[{index}]")
+                require_exact_fields(issue, f"validation_errors[{index}]", issue_keys)
+                if not isinstance(issue["available_ids"], list) or any(not isinstance(value, str) for value in issue["available_ids"]):
+                    raise ValidationError(f"validation_errors[{index}].available_ids", "must be an array of strings")
+                for field in ("path", "category", "explanation"):
+                    require_string(issue[field], f"validation_errors[{index}].{field}", allow_empty=False)
+                for field in ("found", "expected_namespace"):
+                    if issue[field] is not None: require_string(issue[field], f"validation_errors[{index}].{field}")
+                if any(not isinstance(issue[field], bool) for field in ("deterministic_repair_permitted", "model_repair_permitted")):
+                    raise ValidationError(f"validation_errors[{index}]", "repairability flags must be booleans")
+                normalized_errors.append(dict(issue))
+            checked.update({"raw_result_sha256": _sha(data["raw_result_sha256"], "raw_result_sha256"),
+                "protocol_status": status, "semantic_available": data["semantic_available"],
+                "semantic_artifact": artifact, "validation_errors": normalized_errors})
+        return checked
     if kind == "gate_opened":
         require_exact_fields(data, kind, {"gate_id", "kind", "questions", "allowed_response", "resume_token"})
         questions, allowed = data["questions"], data["allowed_response"]
@@ -357,7 +431,10 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
                     any(event.schema_version >= 4 for event in events if event.event_type == "action_intended" and event.body["action_id"] == action_id) and
                     not any(value["action_id"] == action_id for value in attempt_intents.values())):
                 raise ValueError("version-four worker action must have a provider attempt intent")
-            outcomes[action_id] = MappingProxyType({"outcome": item.body["outcome"], "exit_code": item.body["exit_code"], "error": item.body["error"]})
+            outcome = {"outcome": item.body["outcome"], "exit_code": item.body["exit_code"], "error": item.body["error"]}
+            for key in ("protocol_status", "semantic_available", "semantic_artifact"):
+                if key in item.body: outcome[key] = item.body[key]
+            outcomes[action_id] = MappingProxyType(outcome)
             action_telemetry[action_id] = MappingProxyType(dict(item.body["telemetry"]))
             if item.body["outcome"] == "succeeded":
                 try:

@@ -28,6 +28,7 @@ from mathresearch.worker_process import execute_worker
 from .store import load_research_status
 from .evaluation import (EvaluationStore, load_cases, make_manifest, run_paired_trials,
                          write_json, _read_json)
+from mathresearch.structured_output import semantic_artifact, validate_payload, validation_issue
 
 
 _RESULT_KEYS = ("run_status", "answer_status", "model_calls_used", "tool_calls_used",
@@ -97,6 +98,16 @@ def _parser() -> argparse.ArgumentParser:
                           help="freeze condition-blind packets for existing trial outputs")
     evaluate.add_argument("--json", action="store_true", dest="json_output")
     return parser
+
+
+def _promote_live_authorization(manifest_path: Path, manifest: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Record an explicit live resume of a previously dry-run manifest."""
+    if manifest.get("execution_authorization") != "dry_run_only":
+        return manifest
+    promoted = dict(manifest)
+    promoted["execution_authorization"] = "live_explicit"
+    write_json(manifest_path, promoted)
+    return promoted
 
 
 def _evaluate(arguments: argparse.Namespace) -> int:
@@ -207,6 +218,8 @@ def _evaluate(arguments: argparse.Namespace) -> int:
                 manifest["execution_authorization"] = "dry_run_only"
             elif arguments.live:
                 manifest["execution_authorization"] = "live_explicit"
+        if arguments.live and manifest.get("execution_authorization") == "dry_run_only":
+            manifest = _promote_live_authorization(out_manifest_path, manifest)
         store = EvaluationStore(arguments.out_dir, manifest)
         run_result = None
         if arguments.live:
@@ -325,9 +338,18 @@ def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
         errors = [str(item["error"]) for item in snapshot.outcomes.values() if item.get("error")]
         protocol_invalid = any(item.get("outcome") == "protocol_error"
                                for item in snapshot.outcomes.values())
+        semantic_action = next(((action_id, item) for action_id, item in reversed(
+            list(snapshot.outcomes.items())) if item.get("semantic_artifact")), (None, {}))
+        semantic_text = semantic_action[1].get("semantic_artifact")
+        semantic_attempt = next((item for item in reversed(list(snapshot.attempts.values()))
+            if item.get("action_id") == semantic_action[0] and
+            item.get("semantic_artifact") == semantic_text), {})
         return {"status": "complete" if snapshot.status == "complete" else "failed",
                 "provider_calls": snapshot.model_calls_used, "report": report,
                 "tool_calls_used": snapshot.tool_calls_used,
+                "artifact_sha256": semantic_attempt.get("raw_result_sha256"),
+                "semantic_availability": "available" if semantic_text else "unavailable",
+                "semantic_artifact": semantic_text,
                 "protocol_validity": ("valid" if snapshot.status == "complete" else
                     "invalid" if protocol_invalid else "unavailable"),
                 "final_status": (snapshot.final_assessment.get("answer_status")
@@ -370,6 +392,7 @@ def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
         scratch=scratch, timeout_seconds=worker_timeout)
     (trial_dir / "stdout.bin").write_bytes(output.stdout)
     (trial_dir / "stderr.log").write_bytes(output.stderr)
+    (trial_dir / "provider-result.bin").write_bytes(output.raw_result or b"")
     initial_output = output
     write_json(trial_dir / "provider-result.json", {
         "outcome": output.outcome, "exit_code": output.exit_code,
@@ -380,75 +403,109 @@ def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
     report = None
     status = "failed"
     result = None
-    validation_error = None
-    if output.outcome == "succeeded" and output.payload is not None and mismatch is None:
-        try:
-            result = validate_result("answer", output.payload, prompt_version=PROMPT_VERSION)
-        except ValidationError as error:
-            validation_error = error
-            if condition == "baseline_repair":
-                repair_prompt = structural_repair_prompt(prompt, output.payload, error,
-                                                         require_change_log=True)
-                remaining = int(timeout_seconds - (time.monotonic() - preflight_started))
-                if remaining > 0:
-                    repair_scratch = trial_dir / "repair-scratch"
-                    repair_scratch.mkdir(parents=True, exist_ok=True)
-                    repaired = execute_worker(adapter, WorkerInput(
-                        "baseline-structural-repair", repair_prompt, result_schema("answer", PROMPT_VERSION)),
-                        scratch=repair_scratch, timeout_seconds=min(180, remaining))
-                    if repaired.outcome != "launch_failed":
-                        provider_calls += 1
-                    (trial_dir / "repair.stdout.bin").write_bytes(repaired.stdout)
-                    (trial_dir / "repair.stderr.log").write_bytes(repaired.stderr)
-                    write_json(trial_dir / "provider-result-repair.json", {
-                        "outcome": repaired.outcome, "exit_code": repaired.exit_code,
-                        "error": repaired.error, "payload": repaired.payload})
-                    before_text = json.dumps(output.payload, ensure_ascii=False, indent=2, sort_keys=True).splitlines()
-                    after_text = json.dumps(repaired.payload, ensure_ascii=False, indent=2, sort_keys=True).splitlines() if repaired.payload is not None else []
-                    (trial_dir / "repair-review.diff").write_text("\n".join(difflib.unified_diff(
-                        before_text, after_text, fromfile="rejected-payload", tofile="corrected-payload",
-                        lineterm="")) + "\n", encoding="utf-8")
-                    output = repaired
-                    observed = parse_provider_observation(repaired.stderr)
-                    mismatch = check_provider_observation(request, observed)
-                    if repaired.outcome == "succeeded" and repaired.payload is not None and mismatch is None:
-                        try:
-                            result = validate_result("answer", repaired.payload,
-                                                     prompt_version=PROMPT_VERSION)
-                            if (not result["change_log"] or
-                                    result["change_log"] == initial_output.payload.get("change_log", [])):
-                                raise ValidationError("change_log", "structural repair must record its change explanation")
-                            validation_error = None
-                        except ValidationError as repair_error:
-                            validation_error = repair_error
-            if result is None:
-                review_payload = (output.payload if isinstance(output.payload, Mapping)
-                                  else initial_output.payload)
-                combined_error = "; ".join(value for value in (
-                    f"initial schema error: {validation_error}" if validation_error else None,
-                    mismatch, output.error) if value)
-                error_lower = combined_error.lower()
-                failure_class = ("provider_usage_limit" if any(marker in error_lower for marker in
-                    ("usage limit", "rate limit", "quota exceeded", "too many requests"))
-                    else "provider_failure" if output.payload is None and provider_calls > 1
-                    else "schema_rejection")
-                return {"status": "failed", "provider_calls": provider_calls, "report": None,
-                        "cost_usd": None, "observed_model": observed.get("model"),
-                        "observed_effort": observed.get("effort"), "input_tokens": None,
-                        "output_tokens": None, "provider_outcome": output.outcome,
-                        "provider_exit_code": output.exit_code,
-                        "observed_session_markers": count_session_id_markers(initial_output.stderr) +
-                            (count_session_id_markers(output.stderr) if output is not initial_output else 0),
-                        "artifact_sha256": hashlib.sha256(json.dumps(review_payload,
-                            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
-                            allow_nan=False).encode("utf-8")).hexdigest()
-                            if review_payload is not None else None,
-                        "protocol_validity": ("invalid" if validation_error is not None or
-                            isinstance(review_payload, Mapping) else "unavailable"),
-                        "failure_class": failure_class,
-                        "final_status": review_payload.get("question_status")
-                            if isinstance(review_payload, Mapping) else None,
-                        "error": combined_error or "baseline repair returned no valid result"}
+    validation_errors: list[Mapping[str, Any]] = []
+    if mismatch is not None:
+        validation_errors = [{"path": "$", "category": "provider_configuration_mismatch",
+            "found": None, "expected_namespace": None, "available_ids": [],
+            "explanation": mismatch, "deterministic_repair_permitted": False,
+            "model_repair_permitted": False}]
+    elif output.outcome == "protocol_error":
+        validation_errors = [output.validation_details or {"path": "$",
+            "category": "invalid_json", "found": None,
+            "expected_namespace": "one JSON object", "available_ids": [],
+            "explanation": output.error or "invalid structured output",
+            "deterministic_repair_permitted": False, "model_repair_permitted": True}]
+    elif output.outcome == "succeeded" and output.payload is not None:
+        gate = validate_payload(output.payload, lambda value: validate_result(
+            "answer", value, prompt_version=PROMPT_VERSION))
+        if gate.protocol_status == "valid": result = gate.value
+        else: validation_errors = list(gate.issues)
+
+    if (result is None and validation_errors and condition == "baseline_repair" and
+            validation_errors[0].get("model_repair_permitted") is not False):
+        rejected_output = output
+        repair_prompt = structural_repair_prompt(prompt,
+            output.payload if isinstance(output.payload, Mapping) else None,
+            validation_errors[0], raw_output=output.raw_result,
+            require_change_log=True)
+        remaining = int(timeout_seconds - (time.monotonic() - preflight_started))
+        if remaining > 0:
+            repair_scratch = trial_dir / "repair-scratch"
+            repair_scratch.mkdir(parents=True, exist_ok=True)
+            repaired = execute_worker(adapter, WorkerInput(
+                "baseline-structural-repair", repair_prompt, result_schema("answer", PROMPT_VERSION)),
+                scratch=repair_scratch, timeout_seconds=min(180, remaining))
+            if repaired.outcome != "launch_failed": provider_calls += 1
+            (trial_dir / "repair.stdout.bin").write_bytes(repaired.stdout)
+            (trial_dir / "repair.stderr.log").write_bytes(repaired.stderr)
+            (trial_dir / "provider-result-repair.bin").write_bytes(repaired.raw_result or b"")
+            write_json(trial_dir / "provider-result-repair.json", {
+                "outcome": repaired.outcome, "exit_code": repaired.exit_code,
+                "error": repaired.error, "payload": repaired.payload})
+            before_text = (json.dumps(rejected_output.payload, ensure_ascii=False,
+                indent=2, sort_keys=True).splitlines() if isinstance(rejected_output.payload, Mapping)
+                else (rejected_output.raw_result or b"").decode("utf-8", "replace").splitlines())
+            after_text = json.dumps(repaired.payload, ensure_ascii=False, indent=2,
+                sort_keys=True).splitlines() if repaired.payload is not None else []
+            (trial_dir / "repair-review.diff").write_text("\n".join(difflib.unified_diff(
+                before_text, after_text, fromfile="rejected-payload", tofile="corrected-payload",
+                lineterm="")) + "\n", encoding="utf-8")
+            output = repaired
+            observed = parse_provider_observation(repaired.stderr)
+            mismatch = check_provider_observation(request, observed)
+            validation_errors = []
+            if mismatch is not None:
+                validation_errors = [{"path": "$", "category": "provider_configuration_mismatch",
+                    "found": None, "expected_namespace": None, "available_ids": [],
+                    "explanation": mismatch, "deterministic_repair_permitted": False,
+                    "model_repair_permitted": False}]
+            elif repaired.outcome == "protocol_error":
+                validation_errors = [repaired.validation_details or {"path": "$",
+                    "category": "invalid_json", "found": None,
+                    "expected_namespace": "one JSON object", "available_ids": [],
+                    "explanation": repaired.error or "invalid repaired output",
+                    "deterministic_repair_permitted": False, "model_repair_permitted": True}]
+            elif repaired.outcome == "succeeded" and repaired.payload is not None:
+                def validate_repair(value: Mapping[str, Any]) -> dict[str, Any]:
+                    checked = validate_result("answer", value, prompt_version=PROMPT_VERSION)
+                    old_change_log = (rejected_output.payload.get("change_log", [])
+                        if isinstance(rejected_output.payload, Mapping) else [])
+                    if not checked["change_log"] or checked["change_log"] == old_change_log:
+                        raise ValidationError("change_log", "structural repair must record its change explanation")
+                    return checked
+                gate = validate_payload(repaired.payload, validate_repair)
+                if gate.protocol_status == "valid": result = gate.value
+                else: validation_errors = list(gate.issues)
+
+    if result is None:
+        review_payload = (output.payload if isinstance(output.payload, Mapping)
+                          else initial_output.payload)
+        semantic_source = output if output.semantic_artifact else initial_output
+        combined_error = "; ".join(value for value in (
+            "; ".join(str(issue.get("explanation", "")) for issue in validation_errors),
+            mismatch, output.error) if value)
+        error_lower = combined_error.lower()
+        failure_class = ("provider_usage_limit" if any(marker in error_lower for marker in
+            ("usage limit", "rate limit", "quota exceeded", "too many requests"))
+            else "schema_rejection" if validation_errors or output.outcome == "protocol_error"
+            else "provider_failure")
+        raw_bytes = semantic_source.raw_result or b""
+        return {"status": "failed", "provider_calls": provider_calls, "report": None,
+                "cost_usd": None, "observed_model": observed.get("model"),
+                "observed_effort": observed.get("effort"), "input_tokens": None,
+                "output_tokens": None, "provider_outcome": output.outcome,
+                "provider_exit_code": output.exit_code,
+                "observed_session_markers": count_session_id_markers(initial_output.stderr) +
+                    (count_session_id_markers(output.stderr) if output is not initial_output else 0),
+                "artifact_sha256": hashlib.sha256(raw_bytes).hexdigest()
+                    if semantic_source.semantic_artifact else None,
+                "protocol_validity": "invalid" if failure_class == "schema_rejection" else "unavailable",
+                "semantic_availability": "available" if semantic_source.semantic_artifact else "unavailable",
+                "semantic_artifact": semantic_source.semantic_artifact,
+                "failure_class": failure_class,
+                "final_status": review_payload.get("question_status")
+                    if isinstance(review_payload, Mapping) else None,
+                "error": combined_error or "baseline returned no valid result"}
         lines = ["# " + ("Repair-enabled baseline" if condition == "baseline_repair" else "Single-call baseline"), "",
             f"Requested model: `{manifest['model']}`; requested effort: `{manifest['effort']}`.",
             "This is one unaudited answer. The paired pipeline received the same question, "
@@ -465,13 +522,17 @@ def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
         status = "complete"
     if report is not None:
         (trial_dir / "report.md").write_text(report, encoding="utf-8")
+    semantic_source = output if output.semantic_artifact else initial_output
+    raw_bytes = semantic_source.raw_result or b""
     return {"status": status, "provider_calls": provider_calls,
             "tool_calls_used": 0,
             "report": report,
-            "artifact_sha256": (hashlib.sha256(json.dumps(output.payload,
-                ensure_ascii=False, sort_keys=True, separators=(",", ":"),
-                allow_nan=False).encode("utf-8")).hexdigest() if output.payload is not None else None),
-            "protocol_validity": "valid" if status == "complete" else "unavailable",
+            "artifact_sha256": hashlib.sha256(raw_bytes).hexdigest()
+                if semantic_source.semantic_artifact else None,
+            "protocol_validity": "valid" if status == "complete" else
+                "invalid" if output.outcome == "protocol_error" or mismatch is not None else "unavailable",
+            "semantic_availability": "available" if semantic_source.semantic_artifact else "unavailable",
+            "semantic_artifact": semantic_source.semantic_artifact,
             "final_status": (output.payload.get("question_status")
                              if isinstance(output.payload, Mapping) else None),
             "failure_class": ("provider_usage_limit" if any(marker in

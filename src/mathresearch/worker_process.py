@@ -13,6 +13,7 @@ from typing import Any, Mapping
 
 from .adapters.base import Adapter, LaunchSpec, WorkerInput, WorkerOutput
 from .locking import _is_link_or_reparse_point
+from .structured_output import semantic_artifact
 
 
 MAX_CAPTURE_BYTES = 8 * 1024 * 1024
@@ -111,18 +112,41 @@ def execute_worker(adapter: Adapter, task: WorkerInput, *, scratch: Path, timeou
     _close_streams(process)
     if job is not None:
         job.close()
-    if stdin_writer.error is not None and exit_code == 0:
-        return WorkerOutput("failed", exit_code, stdout_reader.data, stderr_reader.data, None, f"provider I/O failed: {stdin_writer.error}")
-    if exit_code != 0:
-        return WorkerOutput("failed", exit_code, stdout_reader.data, stderr_reader.data, None, "provider exited unsuccessfully")
     try:
-        result_bytes = _read_result(spec.result_file, root)
+        result_bytes = _read_result_if_present(spec.result_file, root)
+    except (OSError, ValueError) as exc:
+        return WorkerOutput("protocol_error", exit_code, stdout_reader.data,
+            stderr_reader.data, None, f"provider result capture error: {exc}",
+            raw_result=stdout_reader.data, protocol_status="invalid",
+            semantic_artifact=semantic_artifact(stdout_reader.data))
+    raw_result = (result_bytes if result_bytes is not None else
+                  stdout_reader.data if spec.result_file is None else b"")
+    if stdin_writer.error is not None and exit_code == 0:
+        return WorkerOutput("failed", exit_code, stdout_reader.data, stderr_reader.data,
+            None, f"provider I/O failed: {stdin_writer.error}", raw_result=raw_result,
+            protocol_status="unavailable", semantic_artifact=semantic_artifact(raw_result))
+    if exit_code != 0:
+        return WorkerOutput("failed", exit_code, stdout_reader.data, stderr_reader.data,
+            None, "provider exited unsuccessfully", raw_result=raw_result,
+            protocol_status="unavailable", semantic_artifact=semantic_artifact(raw_result))
+    try:
         payload = adapter.decode(stdout_reader.data, result_bytes)
         if not isinstance(payload, Mapping):
             raise ValueError("provider decoded a non-object result")
     except (OSError, ValueError, TypeError) as exc:
-        return WorkerOutput("failed", exit_code, stdout_reader.data, stderr_reader.data, None, f"adapter protocol error: {exc}")
-    return WorkerOutput("succeeded", exit_code, stdout_reader.data, stderr_reader.data, dict(payload), None)
+        issue = {"path": "$", "category": "invalid_json",
+            "found": raw_result[:160].decode("utf-8", "replace") or None,
+            "expected_namespace": "one JSON object", "available_ids": [],
+            "explanation": str(exc)[:1000],
+            "deterministic_repair_permitted": False,
+            "model_repair_permitted": True}
+        return WorkerOutput("protocol_error", exit_code, stdout_reader.data,
+            stderr_reader.data, None, f"adapter protocol error: {exc}", issue,
+            raw_result=raw_result, protocol_status="invalid",
+            semantic_artifact=semantic_artifact(raw_result))
+    return WorkerOutput("succeeded", exit_code, stdout_reader.data, stderr_reader.data,
+        dict(payload), None, raw_result=raw_result, protocol_status="parsed",
+        semantic_artifact=semantic_artifact(raw_result, payload))
 
 
 def _launch_failure(message: str) -> WorkerOutput:
@@ -193,6 +217,16 @@ def _read_result(result_file: Path | None, root: Path) -> bytes | None:
         return b"".join(chunks)
     finally:
         os.close(descriptor)
+
+
+def _read_result_if_present(result_file: Path | None, root: Path) -> bytes | None:
+    if result_file is None:
+        return None
+    try:
+        Path(result_file).lstat()
+    except FileNotFoundError:
+        return None
+    return _read_result(result_file, root)
 
 
 def _require_safe_directory_chain(path: Path) -> None:

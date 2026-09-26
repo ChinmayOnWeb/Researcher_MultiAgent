@@ -23,6 +23,7 @@ from typing import Any
 from mathresearch.contracts.validation import ValidationError
 from mathresearch.locking import acquire_run_lock
 from mathresearch.research.math_checks import perform_math_check, validate_math_arguments
+from mathresearch.structured_output import parse_json_object, semantic_artifact
 
 
 DIMENSIONS = ("correctness", "provenance", "coverage", "challenge", "uncertainty")
@@ -153,28 +154,42 @@ def _captured_answer_material(trial_dir: Path, trial: Mapping[str, Any]) -> tupl
     candidates: list[tuple[tuple[int, int, int], str, dict[str, Any], str]] = []
     paths = list(trial_dir.rglob("attempts/**/stdout.bin"))
     paths.extend(path for path in trial_dir.glob("provider-result*.json") if path.is_file())
+    paths.extend(path for path in trial_dir.rglob("result.bin") if path.is_file())
+    paths.extend(path for path in trial_dir.glob("provider-result*.bin") if path.is_file())
     paths.extend(path for path in trial_dir.rglob("stdout.bin") if path not in paths)
     for path in paths:
         try:
             raw = path.read_bytes()
-            if path.suffix == ".json":
+            if path.suffix == ".bin":
+                try:
+                    value = dict(parse_json_object(raw).value)
+                except (UnicodeError, ValueError, TypeError):
+                    value = None
+                material = _payload_semantic_material(value)
+                if material is None:
+                    answer_text = semantic_artifact(raw, value)
+                    material = ({"answer": answer_text, "supporting_work": ""}
+                                if answer_text else None)
+                if material is None: continue
+            elif path.suffix == ".json":
                 value = json.loads(raw.decode("utf-8"))
                 value = value.get("payload") if isinstance(value, Mapping) else None
+                material = _payload_semantic_material(value)
             else:
                 value = json.loads(raw.decode("utf-8"))
-            material = _payload_semantic_material(value)
+                material = _payload_semantic_material(value)
         except (OSError, UnicodeError, json.JSONDecodeError):
             continue
         if material is not None:
             relative = path.relative_to(trial_dir).as_posix()
-            attempt = re.search(r"actions/a(\d+)/attempts/a\d+-a(\d+)/stdout\.bin$", relative)
+            attempt = re.search(r"actions/a(\d+)/attempts/a\d+-a(\d+)/(?:stdout|result)\.bin$", relative)
             action = re.search(r"actions/a(\d+)/stdout\.bin$", relative)
             if attempt:
                 order = (3, int(attempt.group(1)), int(attempt.group(2)))
             elif action:
                 order = (2, int(action.group(1)), 0)
             elif path.name.startswith("provider-result"):
-                order = (1, 0, 0)
+                order = (1, 0, 1 if "repair" in path.stem else 0)
             else:
                 order = (0, 0, 0)
             candidates.append((order, relative, material, sha256(raw)))
@@ -203,6 +218,8 @@ def _captured_output_hashes(trial_dir: Path) -> set[str]:
     """Return hashes for persisted provider captures usable as grading support."""
     paths = list(trial_dir.rglob("stdout.bin"))
     paths.extend(path for path in trial_dir.glob("provider-result*.json") if path.is_file())
+    paths.extend(path for path in trial_dir.rglob("result.bin") if path.is_file())
+    paths.extend(path for path in trial_dir.glob("provider-result*.bin") if path.is_file())
     paths.extend(path for path in trial_dir.rglob("report.md") if path.is_file())
     hashes: set[str] = set()
     for path in paths:
@@ -799,6 +816,7 @@ def make_trial(*, case_id: str, replicate: int, condition: str, status: str,
                tool_calls_used: int | None = None,
                artifact_sha256: str | None = None,
                protocol_validity: str | None = None,
+               semantic_availability: str | None = None,
                failure_class: str | None = None,
                final_status: str | None = None,
                observed_session_markers: int | None = None) -> dict[str, Any]:
@@ -827,6 +845,8 @@ def make_trial(*, case_id: str, replicate: int, condition: str, status: str,
         raise ValidationError("artifact_sha256", "must be a lowercase SHA-256 digest or null")
     if protocol_validity not in {None, "valid", "invalid", "unavailable"}:
         raise ValidationError("protocol_validity", "is invalid")
+    if semantic_availability not in {None, "available", "unavailable"}:
+        raise ValidationError("semantic_availability", "is invalid")
     if failure_class not in {None, "schema_rejection", "provider_usage_limit", "provider_failure",
                              "timeout", "permission_failure", "other"}:
         raise ValidationError("failure_class", "is invalid")
@@ -844,6 +864,7 @@ def make_trial(*, case_id: str, replicate: int, condition: str, status: str,
             "report": report, "report_sha256": report_hash,
             "artifact_sha256": artifact_sha256,
             "protocol_validity": protocol_validity,
+            "semantic_availability": semantic_availability,
             "failure_class": failure_class,
             "final_status": final_status,
             "observed_session_markers": observed_session_markers}
@@ -1157,10 +1178,14 @@ def compare_trials(trials: Sequence[Mapping[str, Any]], grades: Sequence[Mapping
         protocol_counts = {value: sum(item.get("protocol_validity") == value for item in rows)
                            for value in ("valid", "invalid", "unavailable")}
         protocol_counts["unknown"] = sum(item.get("protocol_validity") is None for item in rows)
+        semantic_counts = {value: sum(item.get("semantic_availability") == value for item in rows)
+                           for value in ("available", "unavailable")}
+        semantic_counts["unknown"] = sum(item.get("semantic_availability") is None for item in rows)
         denominator = protocol_counts["valid"] + protocol_counts["invalid"]
         schema_acceptance[condition] = {"attempts": len(rows), **protocol_counts,
             "assessable_protocol_attempts": denominator,
-            "acceptance_rate": protocol_counts["valid"] / denominator if denominator else None}
+            "acceptance_rate": protocol_counts["valid"] / denominator if denominator else None,
+            "semantic_availability": semantic_counts}
         provider_availability[condition] = {
             "trials": len(rows),
             "complete": sum(item.get("status") == "complete" for item in rows),
@@ -1358,6 +1383,9 @@ def compare_trials(trials: Sequence[Mapping[str, Any]], grades: Sequence[Mapping
             "protocol_validity_counts": {validity: sum(item.get("protocol_validity") == validity
                 for item in trial_map.values()) for validity in ("valid", "invalid", "unavailable")}
                 | {"unknown": sum(item.get("protocol_validity") is None for item in trial_map.values())},
+            "semantic_availability_counts": {availability: sum(item.get("semantic_availability") == availability
+                for item in trial_map.values()) for availability in ("available", "unavailable")}
+                | {"unknown": sum(item.get("semantic_availability") is None for item in trial_map.values())},
             "assessable_pair_count": assessable_pairs,
             "expected_pair_count": len(expected_pair_keys),
             "scheduled_pair_count": len(all_expected_pair_keys),
@@ -1626,6 +1654,8 @@ def _run_paired_trials_locked(cases: Sequence[Mapping[str, Any]], store: Evaluat
                     protocol_validity=raw.get("protocol_validity") or (
                         "valid" if raw["status"] == "complete" else
                         "invalid" if classify_trial_failure(raw) == "schema_rejection" else "unavailable"),
+                    semantic_availability=raw.get("semantic_availability") or (
+                        "available" if raw.get("artifact_sha256") is not None else "unavailable"),
                     failure_class=classify_trial_failure(raw),
                     final_status=raw.get("final_status"),
                     observed_session_markers=raw.get("observed_session_markers"))

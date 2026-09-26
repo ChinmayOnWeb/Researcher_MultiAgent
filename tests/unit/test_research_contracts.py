@@ -186,7 +186,7 @@ class WorkerResultTests(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "unique"):
             validate_result("answer", draft, prompt_version="research-v3")
 
-    def test_v5_reductio_contract_rejects_scope_on_derivations_and_requires_discharge_link(self) -> None:
+    def test_v7_reductio_contract_rejects_scope_on_derivations_and_requires_direct_discharge_link(self) -> None:
         nonlocal_scope = valid_draft()
         nonlocal_scope["claims"][0].update({"kind": "deduction", "step_ids": ["step-one"],
             "scope_step_ids": ["step-one"]})  # type: ignore[index]
@@ -202,10 +202,15 @@ class WorkerResultTests(unittest.TestCase):
                  "depends_on": [], "basis": "local_assumption", "basis_reference": "Temporary reductio assumption.",
                  "scope_step_ids": ["step-assume", "step-contradiction"],
                  "discharged_by_step_ids": ["step-contradiction"]},
-                {"id": "claim-irrationality", "statement": "The value is irrational.", "critical": True,
+                {"id": "claim-contradiction", "statement": "The assumption yields a contradiction.", "critical": True,
                  "kind": "deduction", "citations": [], "step_ids": ["step-conclusion"], "tool_ids": [],
                  "depends_on": ["claim-rationality"], "basis": "derivation",
-                 "basis_reference": "The reductio discharges the rationality assumption.",
+                 "basis_reference": "The temporary assumption conflicts with the proof.",
+                 "scope_step_ids": [], "discharged_by_step_ids": []},
+                {"id": "claim-irrationality", "statement": "The value is irrational.", "critical": True,
+                 "kind": "deduction", "citations": [], "step_ids": ["step-contradiction", "step-conclusion"], "tool_ids": [],
+                 "depends_on": ["claim-contradiction"], "basis": "derivation",
+                 "basis_reference": "The contradiction discharges the rationality assumption.",
                  "scope_step_ids": [], "discharged_by_step_ids": []}],
             "proof_steps": [
                 {"id": "step-assume", "statement": "Assume rationality.", "justification": "Reductio.",
@@ -215,7 +220,7 @@ class WorkerResultTests(unittest.TestCase):
                 {"id": "step-conclusion", "statement": "Conclude irrationality.", "justification": "Discharge the assumption.",
                  "depends_on": ["step-contradiction"], "citations": []}],
             "approaches": [], "open_questions": [], "tool_requests": [], "change_log": []}
-        with self.assertRaisesRegex(ValidationError, "must be included in a dependent deduction claim"):
+        with self.assertRaisesRegex(ValidationError, "must be included in step_ids of a deduction that directly depends"):
             validate_result("answer", reductio, prompt_version="research-v5")
         reductio["claims"][1]["step_ids"] = ["step-contradiction", "step-conclusion"]  # type: ignore[index]
         self.assertEqual(validate_result("answer", reductio, prompt_version="research-v5"), reductio)

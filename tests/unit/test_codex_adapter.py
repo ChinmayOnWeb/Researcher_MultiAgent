@@ -75,10 +75,12 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertTrue(codex.available)
         self.assertIsNone(codex.reason)
 
-    def test_decode_requires_one_strict_json_value(self) -> None:
+    def test_decode_uses_shared_conservative_json_object_parser(self) -> None:
         adapter = CodexAdapter(Path("C:/tools/codex.exe"))
         self.assertEqual(adapter.decode(b"ignored", b'{"value": 1}'), {"value": 1})
+        self.assertEqual(adapter.decode(b"ignored", b'\xef\xbb\xbf```json\n{"value": 1}\n```'), {"value": 1})
+        self.assertEqual(adapter.decode(b"ignored", b'Answer:\n{"value": 1}\nDone'), {"value": 1})
         with self.assertRaises(ValueError):
-            adapter.decode(b"ignored", b'{"value": 1} trailing')
+            adapter.decode(b"ignored", b'{"value": 1} and {"value": 2}')
         with self.assertRaises(ValueError):
             adapter.decode(b"ignored", b'{"value": NaN}')

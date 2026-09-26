@@ -15,7 +15,8 @@ from typing import Any, Callable, Mapping, Protocol
 from mathresearch.adapters.base import Adapter, WorkerInput, WorkerOutput
 from mathresearch.contracts.validation import ValidationError
 from mathresearch.research.broker import run_broker
-from mathresearch.research.contracts import validate_audit_for_draft, validate_result
+from mathresearch.research.contracts import (OUTPUT_SCHEMA_VERSION, VALIDATOR_VERSION,
+    validate_audit_for_draft, validate_result)
 from mathresearch.research.events import ResearchEvent, ResearchSnapshot, canonical_json_bytes
 from mathresearch.research.provenance import check_provenance
 from mathresearch.research.prompts import build_packet, build_prompt, structural_repair_prompt
@@ -24,6 +25,7 @@ from mathresearch.research.provider import (check_provider_observation, create_r
 from mathresearch.research.reporting import render_log, render_report
 from mathresearch.research.routing import Decision, assess_latest, next_decision
 from mathresearch.research.store import LockedResearchRun, initialize_research, open_research_run
+from mathresearch.structured_output import semantic_artifact, validate_payload, validation_issue
 from mathresearch.worker_process import execute_worker
 
 
@@ -167,7 +169,10 @@ def _configuration(adapter: Adapter) -> dict[str, Any]:
     else:
         value = provider_configuration(adapter)  # type: ignore[arg-type]
     if not isinstance(value, Mapping): raise ValueError("provider returned no configuration receipt")
-    return dict(value)
+    config = dict(value)
+    config.setdefault("schema_version", OUTPUT_SCHEMA_VERSION)
+    config.setdefault("validator_version", VALIDATOR_VERSION)
+    return config
 
 
 def _validate_provider_config(snapshot: ResearchSnapshot, config: Mapping[str, Any],
@@ -176,7 +181,8 @@ def _validate_provider_config(snapshot: ResearchSnapshot, config: Mapping[str, A
         raise ValueError("provider selected a model different from the immutable request")
     if config.get("effort_requested") != snapshot.request.provider["reasoning_effort"]:
         raise ValueError("provider selected an effort different from the immutable request")
-    if recorded_config is not None and dict(config) != dict(recorded_config):
+    if recorded_config is not None and any(config.get(key) != value
+            for key, value in recorded_config.items() if key != "prompt_version"):
         raise ValueError("provider configuration changed after initial configuration")
 
 
@@ -186,6 +192,8 @@ def _configure(run: LockedResearchRun, factory: ProviderFactory, now: Now,
     preflight = getattr(adapter, "preflight", None)
     if preflight is not None: preflight()
     config = _configuration(adapter)
+    from mathresearch.research.prompts import PROMPT_VERSION
+    config["prompt_version"] = PROMPT_VERSION
     _validate_provider_config(run.snapshot, config, None)
     snapshot = _event(run, "provider_configured", config, now)
     if fault_hook: fault_hook("after_provider_configured", snapshot)
@@ -212,7 +220,8 @@ def _tool_result(snapshot: ResearchSnapshot, action: Mapping[str, Any], scratch:
         authorized_urls=urls, scope=_scope(action), scratch=scratch,
         remaining_seconds=remaining)
     stdout = canonical_json_bytes(receipt)
-    return WorkerOutput("succeeded", 0, stdout, b"", receipt, None), receipt
+    return WorkerOutput("succeeded", 0, stdout, b"", receipt, None,
+        raw_result=stdout, protocol_status="valid"), receipt
 
 
 def _telemetry(duration_ms: int, input_bytes: int, output_bytes: int,
@@ -253,9 +262,13 @@ def _execute_provider_attempt(run: LockedResearchRun, action: Mapping[str, Any],
         "attempt_kind": "initial" if parent_attempt_id is None else "structural_repair",
         "retry_reason": retry_reason,
         "prompt_version": (action["payload"]["prompt_version"] if parent_attempt_id is None
-                            else "structural-repair-v3"),
+                            else "structural-repair-v4"),
         "prompt_sha256": hashlib.sha256(prompt_bytes).hexdigest(),
         "schema_sha256": hashlib.sha256(schema_bytes).hexdigest(),
+        "schema_version": OUTPUT_SCHEMA_VERSION,
+        "validator_version": VALIDATOR_VERSION,
+        "repair_errors": ([dict(validation_errors)] if isinstance(validation_errors, Mapping)
+                           else list(validation_errors or [])),
         "input_bytes": input_bytes}, now)
     if fault_hook: fault_hook("after_provider_attempt_intent", snapshot)
     before = monotonic()
@@ -271,32 +284,55 @@ def _execute_provider_attempt(run: LockedResearchRun, action: Mapping[str, Any],
     observed = parse_provider_observation(raw.stderr)
     mismatch = check_provider_observation(snapshot.request, observed)
     output = raw
+    validation_errors: list[Mapping[str, Any]] = []
     if mismatch is not None:
-        output = WorkerOutput("protocol_error", raw.exit_code, raw.stdout, raw.stderr, None, mismatch)
+        issue = {"path": "$", "category": "provider_configuration_mismatch", "found": None,
+            "expected_namespace": None, "available_ids": [], "explanation": mismatch,
+            "deterministic_repair_permitted": False, "model_repair_permitted": False}
+        validation_errors.append(issue)
+        output = WorkerOutput("protocol_error", raw.exit_code, raw.stdout, raw.stderr,
+            raw.payload, mismatch, issue, raw.raw_result, "invalid",
+            raw.semantic_artifact or semantic_artifact(raw.raw_result or b"", raw.payload))
     elif raw.outcome == "succeeded" and raw.payload is not None:
-        try:
-            packet = json.loads(snapshot.intent_packets[action["id"]])
-            result_version = action["payload"]["prompt_version"]
-            if (action["role"] == "audit" and isinstance(packet.get("inputs", {}).get("draft"), Mapping)
-                    and packet["inputs"]["draft"].get("claims") and
-                    "basis" in packet["inputs"]["draft"]["claims"][0]):
-                result_version = "research-v3"
-            checked_result = validate_result(action["role"], raw.payload,
+        packet = json.loads(snapshot.intent_packets[action["id"]])
+        result_version = action["payload"]["prompt_version"]
+
+        def validate_candidate(value: Mapping[str, Any]) -> dict[str, Any]:
+            checked_result = validate_result(action["role"], value,
                 prompt_version=result_version)
             if parent_attempt_id is not None and action["role"] in {"answer", "branch", "synthesize", "revise"}:
                 prior_log = list((rejected_payload or {}).get("change_log", []))
                 if not checked_result["change_log"] or checked_result["change_log"] == prior_log:
                     raise ValidationError("change_log", "structural repair must record its change explanation")
             if action["role"] == "audit":
-                validate_audit_for_draft(raw.payload, packet["inputs"]["draft"],
+                validate_audit_for_draft(value, packet["inputs"]["draft"],
                     prompt_version=result_version)
             if action["role"] in {"answer", "branch", "synthesize", "revise"}:
-                issues = check_provenance(raw.payload, packet["sources"], packet["tool_results"])
+                issues = check_provenance(value, packet["sources"], packet["tool_results"],
+                    prompt_version=result_version)
                 if issues: raise ValidationError("provenance", "; ".join(issues))
-        except ValidationError as exc:
+            return checked_result
+
+        gate = validate_payload(raw.payload, validate_candidate)
+        if gate.protocol_status == "invalid":
+            issue = gate.issues[0]
+            validation_errors.append(issue)
             output = WorkerOutput("protocol_error", raw.exit_code, raw.stdout, raw.stderr,
-                                  raw.payload, f"structural validation failed: {exc}",
-                                  {"field": exc.field, "message": exc.message, **exc.details})
+                raw.payload, f"structured output validation failed: {issue['explanation']}", issue,
+                raw.raw_result, "invalid", raw.semantic_artifact or semantic_artifact(raw.raw_result or b"", raw.payload))
+        else:
+            output = WorkerOutput(raw.outcome, raw.exit_code, raw.stdout, raw.stderr,
+                dict(gate.value), raw.error, raw.validation_details, raw.raw_result,
+                "valid", raw.semantic_artifact or semantic_artifact(raw.raw_result or b"", raw.payload))
+    elif raw.outcome == "protocol_error":
+        details = raw.validation_details or {"path": "$", "category": "invalid_json",
+            "found": None, "expected_namespace": "one JSON object", "available_ids": [],
+            "explanation": raw.error or "provider output could not be parsed",
+            "deterministic_repair_permitted": True, "model_repair_permitted": True}
+        validation_errors.append(details)
+        output = WorkerOutput("protocol_error", raw.exit_code, raw.stdout, raw.stderr,
+            raw.payload, raw.error, details, raw.raw_result, "invalid",
+            raw.semantic_artifact or semantic_artifact(raw.raw_result or b"", raw.payload))
     combined = " ".join(str(value or "") for value in (
         output.error, output.stderr.decode("utf-8", "replace"),
         output.stdout.decode("utf-8", "replace"))).lower()
@@ -312,6 +348,8 @@ def _execute_provider_attempt(run: LockedResearchRun, action: Mapping[str, Any],
         failure_class = None
     stdout_digest = run.write_attempt_capture(action["id"], attempt_id, "stdout.bin", raw.stdout)
     stderr_digest = run.write_attempt_capture(action["id"], attempt_id, "stderr.log", raw.stderr)
+    raw_result = raw.raw_result or b""
+    raw_result_digest = run.write_attempt_capture(action["id"], attempt_id, "result.bin", raw_result)
     telemetry = _telemetry(int((monotonic() - before) * 1000), input_bytes,
                            len(raw.stdout) + len(raw.stderr), observed)
     repair_review = None
@@ -330,7 +368,12 @@ def _execute_provider_attempt(run: LockedResearchRun, action: Mapping[str, Any],
         "stderr_sha256": stderr_digest, "error": output.error,
         "telemetry": telemetry, "failure_class": failure_class,
         "session_id_marker_count": count_session_id_markers(raw.stderr),
-        "repair_review": repair_review}, now)
+        "repair_review": repair_review,
+        "raw_result_sha256": raw_result_digest,
+        "protocol_status": output.protocol_status,
+        "semantic_available": bool(output.semantic_artifact),
+        "semantic_artifact": output.semantic_artifact,
+        "validation_errors": validation_errors}, now)
     if fault_hook: fault_hook("after_provider_attempt_finished", completed)
     return output, observed, attempt_id, input_bytes
 
@@ -363,9 +406,16 @@ def _execute_action(run: LockedResearchRun, action: Mapping[str, Any], adapter: 
                         run, action, adapter, prompt, packet["output_schema"], scratch_parent,
                         now, monotonic, fault_hook)
                     attempts_input_bytes = input_bytes
-                    if output.outcome == "protocol_error" and output.error and output.payload is not None:
-                        repair_prompt = structural_repair_prompt(prompt, output.payload,
-                            output.validation_details or {"message": output.error},
+                    if (output.outcome == "protocol_error" and output.error and
+                            not (output.validation_details and
+                                 output.validation_details.get("model_repair_permitted") is False)):
+                        repair_details = output.validation_details or {"path": "$",
+                            "category": "protocol_violation", "explanation": output.error,
+                            "deterministic_repair_permitted": False,
+                            "model_repair_permitted": True}
+                        repair_prompt = structural_repair_prompt(prompt,
+                            output.payload if isinstance(output.payload, Mapping) else None,
+                            repair_details, raw_output=output.raw_result,
                             require_change_log=action["role"] in {"answer", "branch", "synthesize", "revise"})
                         first = output
                         repaired, observed, _, repair_input_bytes = _execute_provider_attempt(
@@ -373,13 +423,15 @@ def _execute_action(run: LockedResearchRun, action: Mapping[str, Any], adapter: 
                             scratch_parent, now, monotonic, fault_hook,
                             parent_attempt_id=attempt_id, retry_reason=first.error,
                             rejected_payload=first.payload,
-                            validation_errors=first.validation_details)
+                            validation_errors=repair_details)
                         attempts_input_bytes += repair_input_bytes
                         output = WorkerOutput(repaired.outcome,
                             repaired.exit_code, first.stdout + b"\n[structural-repair]\n" + repaired.stdout,
                             first.stderr + b"\n[structural-repair]\n" + repaired.stderr,
                             repaired.payload if repaired.outcome == "succeeded" else None,
-                            repaired.error)
+                            repaired.error, repaired.validation_details,
+                            repaired.raw_result, repaired.protocol_status,
+                            repaired.semantic_artifact or first.semantic_artifact)
                 else:
                     output, _ = _tool_result(snapshot, action, scratch, remaining)
                     observed = {"model": None, "effort": None}
@@ -399,6 +451,9 @@ def _execute_action(run: LockedResearchRun, action: Mapping[str, Any], adapter: 
         "stdout_sha256": stdout_digest, "stderr_sha256": stderr_digest,
         "result": dict(output.payload) if event_status == "succeeded" and output.payload is not None else None,
         "error": output.error if event_status != "succeeded" else None,
+        "protocol_status": output.protocol_status,
+        "semantic_available": bool(output.semantic_artifact),
+        "semantic_artifact": output.semantic_artifact,
         "telemetry": telemetry}, now)
     if fault_hook: fault_hook(f"after_{action.get('role')}_{action.get('branch') or ''}_finished", finished)
     return finished
