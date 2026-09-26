@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "generator_seed": 20260925,
+  "answers": {
+    "holdout-quick-triangular-sum": {"identity": "sum of the first n positive integers is n(n+1)/2", "certificate": "Induction: true at n=1. Adding n+1 to n(n+1)/2 gives (n+1)(n+2)/2."},
+    "holdout-subset-sum-10": {"count": 9, "witness": [1, 9], "certificate": "There are four pairs, four triples, and one four-element subset; all other subset sizes are impossible."},
+    "holdout-rational-domain-3": {"simplification": "x+3", "domain": "all real x except 3", "broker_check": {"operation": "check_polynomial", "arguments": {"lhs": [-9, 0, 1], "rhs": [-9, 0, 1], "lo": -10, "hi": 10}}},
+    "holdout-euler-boundary-16": {"truth": false, "counterexample": {"n": 16, "value": 289, "factorization": "17*17"}, "finite_check": "direct integer evaluation for 0<=n<=16"},
+    "holdout-policy-revision": {"current_deadline": "15 July", "superseded": "30 June", "basis": "Later signed notice explicitly replaces Notice A."},
+    "holdout-square-root-proof": {"truth": "the irrationality proof is valid", "certificate": "Even a implies 2 divides a; substituting a=2k makes b even; this contradicts lowest terms."},
+    "holdout-inventory-ledger": {"complete_kits": 9, "batteries_remaining": 2, "boards_remaining": 2, "certificate": "min(floor(29/3),floor(74/8))=9; 74-9*8=2."}
+  }
+}

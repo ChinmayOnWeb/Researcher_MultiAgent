@@ -17,14 +17,16 @@ class ResearchRoutingTests(unittest.TestCase):
         candidate = copy.deepcopy(base.results["draft-one"])
         candidate["claims"][0].update({"kind": "deduction", "step_ids": ["step-one"],
                                         "tool_ids": ["check-one"]})
+        candidate["claims"][0].update({"basis": "derivation", "basis_reference": "Derived in step-one"})
         candidate["proof_steps"] = [{"id": "step-one", "statement": "The check supports the claim.",
                                       "justification": "The receipt is cited.", "depends_on": [],
                                       "citations": []}]
         review = copy.deepcopy(base.results["audit-one"])
         review["checks"][0]["verdict"] = "supported"
+        review["checks"][0].update({"basis_verdict": "applicable", "basis_reasoning": "Step is valid."})
         review["challenges"][0]["outcome"] = "fails"
         review["challenges"][0]["tool_ids"] = ["check-one"]
-        packet = {"sources": dict(base.sources), "tool_results": {}}
+        packet = {"sources": dict(base.sources), "tool_results": {"check-one": tool_receipt()}}
         audit_packet = {"sources": dict(base.sources), "tool_results": {"check-one": tool_receipt()}}
         state = replace(base,
             results=MappingProxyType(dict(base.results) | {"draft-one": candidate, "audit-one": review}),
@@ -34,8 +36,10 @@ class ResearchRoutingTests(unittest.TestCase):
 
         assessment = assess_latest(state)
 
-        self.assertEqual(assessment["provenance_status"], "invalid")
-        self.assertIn("claim-one", " ".join(assessment["unresolved"]))
+        self.assertEqual(assessment["provenance_status"], "valid")
+        self.assertEqual(assessment["claim_findings"][0]["status"], "contradicted")
+        self.assertTrue(any("claim-one" in finding["claim_id"] and finding["status"] == "contradicted"
+                            for finding in assessment["claim_findings"]))
 
         candidate["claims"][0]["tool_ids"] = []
         state = replace(state, results=MappingProxyType(dict(state.results) | {"draft-one": candidate}))
@@ -81,6 +85,7 @@ class ResearchRoutingTests(unittest.TestCase):
     def test_quick_is_one_unreviewed_answer_call(self) -> None:
         from types import MappingProxyType
         from mathresearch.contracts.research_request import ResearchRequest
+        from mathresearch.research.events import canonical_json_bytes
         base = snapshot(); payload = base.request.to_json(); payload["mode"] = "quick"
         payload["budgets"].update({"max_model_calls": 1, "max_tool_calls": 0, "max_repairs": 0,
                                    "max_branches": 1, "max_wall_seconds": 180, "per_call_seconds": 180})
@@ -178,8 +183,10 @@ class ResearchRoutingTests(unittest.TestCase):
         draft = copy.deepcopy(base.results["draft-one"])
         draft["claims"][0]["kind"] = "deduction"
         draft["claims"][0]["tool_ids"] = ["check-one"]
+        draft["claims"][0].update({"basis": "derivation", "basis_reference": "Derived in a proof step"})
         review = copy.deepcopy(base.results["audit-one"])
         review["checks"][0]["verdict"] = "supported"
+        review["checks"][0].update({"basis_verdict": "applicable", "basis_reasoning": "Valid derivation."})
         review["challenges"][0]["outcome"] = "survives"
         review["challenges"][0]["tool_ids"] = ["check-one"]
         results = dict(base.results) | {"draft-one": draft, "audit-one": review}
@@ -187,6 +194,54 @@ class ResearchRoutingTests(unittest.TestCase):
         decision = next_decision(state)
         self.assertEqual((decision.kind, decision.reason_code), ("finish", "assessment_satisfied"))
         self.assertEqual(decision.assessment["answer_status"], "supported_within_scope")
+
+    def test_adaptive_policy_completes_supported_answer_after_draft_and_audit(self) -> None:
+        from types import MappingProxyType
+        from mathresearch.contracts.research_request import ResearchRequest
+        base = snapshot()
+        payload = base.request.to_json()
+        payload["schema_version"] = 4
+        payload["execution_policy"] = "adaptive"
+        request = ResearchRequest.from_json(payload)
+        state = replace(base, request=request, actions=MappingProxyType({}),
+            results=MappingProxyType({}), sources=MappingProxyType({}),
+            tool_results=MappingProxyType({}), latest_draft_id=None,
+            latest_audit_id=None, model_calls_used=0)
+        first = next_decision(state)
+        self.assertEqual((first.action["role"], first.reason_code),
+                         ("answer", "adaptive_initial_draft"))
+        answer = copy.deepcopy(base.results["draft-one"])
+        answer["question_status"] = "answered"
+        answer["claims"][0].update({"kind": "deduction", "step_ids": ["step-one"],
+            "basis": "derivation", "basis_reference": "Derived in the cited step"})
+        answer["proof_steps"] = [{"id": "step-one", "statement": "Apply the stated rule.",
+            "justification": "The rule applies to the declared domain.", "depends_on": [],
+            "citations": []}]
+        answer_action = action("answer-one", "answer")
+        state = replace(state, actions=MappingProxyType({"answer-one": answer_action}),
+            results=MappingProxyType({"answer-one": answer}), latest_draft_id="answer-one",
+            model_calls_used=1)
+        review_decision = next_decision(state)
+        self.assertEqual((review_decision.action["role"], review_decision.reason_code),
+                         ("audit", "adaptive_independent_review"))
+        audit_action = action("audit-two", "audit", dependencies=["answer-one"])
+        review = copy.deepcopy(base.results["audit-one"])
+        review["checks"][0].update({"verdict": "supported", "basis_verdict": "applicable",
+                                    "basis_reasoning": "The stated rule applies."})
+        review["challenges"][0].update({"outcome": "survives", "tool_ids": ["check-one"]})
+        answer["claims"][0]["tool_ids"] = ["check-one"]
+        state = replace(state,
+            actions=MappingProxyType({"answer-one": answer_action, "audit-two": audit_action}),
+            results=MappingProxyType({"answer-one": answer, "audit-two": review}),
+            tool_results=base.tool_results, latest_audit_id="audit-two", model_calls_used=2)
+        packet = canonical_json_bytes({"sources": dict(base.sources),
+                                       "tool_results": {"check-one": tool_receipt()},
+                                       "inputs": {"draft_id": "answer-one"}})
+        state = replace(state, intent_packets=MappingProxyType({
+            "answer-one": packet, "audit-two": packet}))
+        finish = next_decision(state)
+        self.assertEqual((finish.kind, finish.reason_code), ("finish", "adaptive_obligations_satisfied"))
+        self.assertEqual(finish.assessment["answer_status"], "supported_within_scope")
 
     def test_unsupported_claim_and_finish_recommendation_do_not_finish(self) -> None:
         state = snapshot()

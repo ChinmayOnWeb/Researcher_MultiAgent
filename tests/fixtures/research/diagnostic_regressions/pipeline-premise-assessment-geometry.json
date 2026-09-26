@@ -1,0 +1,50 @@
+{
+  "case_id": "geometry-median-centroid",
+  "final_assessment": {
+    "answer_status": "inconclusive",
+    "claim_findings": [
+      {
+        "claim_id": "triangle-assumption",
+        "reasons": [],
+        "status": "conditional"
+      },
+      {
+        "claim_id": "midpoint-definition",
+        "reasons": [],
+        "status": "model_reviewed_derivation"
+      },
+      {
+        "claim_id": "centroid-definition",
+        "reasons": [],
+        "status": "model_reviewed_derivation"
+      },
+      {
+        "claim_id": "median-ratio",
+        "reasons": [
+          "dependency_triangle-assumption_conditional"
+        ],
+        "status": "conditional"
+      },
+      {
+        "claim_id": "median-concurrence",
+        "reasons": [
+          "dependency_median-ratio_conditional"
+        ],
+        "status": "conditional"
+      }
+    ],
+    "computation_status": "not_performed",
+    "formal_status": "not_performed",
+    "provenance_status": "valid",
+    "semantic_status": "issues_found",
+    "unresolved": [
+      "critical_claim_missing_challenge"
+    ]
+  },
+  "fixture_kind": "captured_status_calibration_observation",
+  "source_report_sha256": "029fd6158c6227e937056073cf14cb8e7cf32d4f8c6978a877feedcccbc313bc",
+  "source_run": "runs/ten-styles-live-approved-20260923-geometry-median-centroid/trials/geometry-median-centroid-01-pipeline/run",
+  "source_state_sha256": "7b68a66b186c384b929794367010309495fbaa1d75231b483dbdd59875507478",
+  "synthetic": false,
+  "terminal_status": "complete"
+}

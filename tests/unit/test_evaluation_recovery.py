@@ -18,8 +18,8 @@ class EvaluationRecoveryTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        cases, cases_hash, rubric_hash = load_cases(Path(__file__).resolve().parents[2] / "evals/research-quality")
-        self.case = next(case for case in cases if case["id"] == "perfect-six")
+        cases, cases_hash, rubric_hash = load_cases(Path(__file__).resolve().parents[2] / "evals/research-value-v2/development")
+        self.case = next(case for case in cases if case["id"] == "dev-subset-sum-9")
         self.manifest = make_manifest(cases=[self.case], cases_hash=cases_hash,
             rubric_hash=rubric_hash, model="gpt-test", effort="high", git_sha="fixture",
             max_provider_calls=10, max_wall_seconds=100, replicates=1)
@@ -40,6 +40,20 @@ class EvaluationRecoveryTests(unittest.TestCase):
         self.assertEqual(again["stopped_reason"], "previous_trial_failed_or_unresolved")
         checkpoint.assert_not_called()
         self.assertEqual(runner.call_count, 1)
+
+    def test_recorded_provider_failure_does_not_discard_remaining_pairs(self):
+        runner = Mock(side_effect=[
+            {"status": "failed", "provider_calls": 1, "failure_class": "provider_failure",
+             "error": "bounded tool request was rejected"},
+            {"status": "complete", "provider_calls": 1, "report": "answer"},
+        ])
+        result = self.run_trials(runner)
+        self.assertIsNone(result["stopped_reason"])
+        self.assertEqual(runner.call_count, 2)
+        self.assertEqual(len(result["trial_conditions_recorded"]), 2)
+        resumed = self.run_trials(runner)
+        self.assertIsNone(resumed["stopped_reason"])
+        self.assertEqual(runner.call_count, 2)
 
     def test_unclear_result_stops_instead_of_spending_on_next_condition(self):
         runner = Mock(side_effect=RuntimeError("connection lost"))
@@ -93,13 +107,13 @@ class EvaluationRecoveryTests(unittest.TestCase):
         self.assertEqual(self.store.trial_records()[0]["provider_calls"], 0)
 
     def test_zero_quota_and_quota_reset_cannot_create_more_allowance(self):
-        args = {"case_id": "perfect-six", "replicate": 1, "condition": "pipeline"}
+        args = {"case_id": "dev-subset-sum-9", "replicate": 1, "condition": "pipeline"}
         self.assertFalse(self.store.record_usage_check(observed_remaining_percent=0, **args))
         with self.assertRaisesRegex(ValidationError, "increased or reset"):
             self.store.record_usage_check(observed_remaining_percent=100, **args)
 
     def test_saved_baseline_survives_reopening_store(self):
-        args = {"case_id": "perfect-six", "replicate": 1, "condition": "pipeline"}
+        args = {"case_id": "dev-subset-sum-9", "replicate": 1, "condition": "pipeline"}
         self.assertTrue(self.store.record_usage_check(observed_remaining_percent=49, **args))
         reopened = EvaluationStore(self.root, self.manifest)
         self.assertFalse(reopened.record_usage_check(observed_remaining_percent=39, **args))
@@ -123,6 +137,7 @@ class EvaluationRecoveryTests(unittest.TestCase):
 
     def test_pipeline_failure_exposes_local_error(self):
         snapshot = SimpleNamespace(status="incomplete", reason="action_failed", model_calls_used=1,
+            tool_calls_used=0, final_assessment=None, pending_attempt_id=None, attempts={},
             actions={"a1": {"kind": "worker"}}, action_telemetry={"a1": {}},
             outcomes={"a1": {"error": "Access denied before provider launch"}})
         with patch("mathresearch.research.cli.initialize"), \
@@ -133,6 +148,7 @@ class EvaluationRecoveryTests(unittest.TestCase):
 
     def test_pipeline_trial_uses_trial_local_worker_temp(self):
         snapshot = SimpleNamespace(status="complete", reason=None, model_calls_used=1,
+            tool_calls_used=0, final_assessment=None, pending_attempt_id=None, attempts={},
             actions={}, action_telemetry={}, outcomes={})
         with patch("mathresearch.research.cli.initialize"), \
              patch("mathresearch.research.cli.run_research", return_value=snapshot) as run:
@@ -140,14 +156,38 @@ class EvaluationRecoveryTests(unittest.TestCase):
                 self.root, 90, self.manifest)
         self.assertEqual(run.call_args.kwargs["scratch_parent"], self.root / "worker-tmp")
 
+    def test_pipeline_trial_continues_through_limited_gates(self):
+        gate_one = {"gate_id": "g0001", "allowed_response": ["continue_limited", "cancel"]}
+        gate_two = {"gate_id": "g0002", "allowed_response": ["continue_limited", "cancel"]}
+        waiting_one = SimpleNamespace(status="awaiting_human", reason=None, model_calls_used=1,
+            tool_calls_used=0, final_assessment=None, pending_attempt_id=None, attempts={},
+            actions={}, action_telemetry={}, outcomes={}, pending_gate=gate_one)
+        waiting_two = SimpleNamespace(status="awaiting_human", reason=None, model_calls_used=2,
+            tool_calls_used=0, final_assessment=None, pending_attempt_id=None, attempts={},
+            actions={}, action_telemetry={}, outcomes={}, pending_gate=gate_two)
+        complete = SimpleNamespace(status="complete", reason=None, model_calls_used=3,
+            tool_calls_used=0, final_assessment=None, pending_attempt_id=None, attempts={},
+            actions={}, action_telemetry={}, outcomes={}, pending_gate=None)
+        with patch("mathresearch.research.cli.initialize"), \
+             patch("mathresearch.research.cli.run_research",
+                   side_effect=[waiting_one, waiting_two, complete]) as run, \
+             patch("mathresearch.research.cli.answer_research_gate") as answer:
+            result = _run_evaluation_trial(self.case, "pipeline",
+                {"source_inputs": [], "replicate": 1}, self.root, 90, self.manifest)
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(answer.call_count, 2)
+        self.assertEqual(answer.call_args_list[0].args[1]["gate_id"], "g0001")
+        self.assertEqual(answer.call_args_list[1].args[1]["gate_id"], "g0002")
+
     def test_cli_reports_failed_smoke_with_nonzero_exit(self):
-        cases = Path(__file__).resolve().parents[2] / "evals/research-quality"
+        cases = Path(__file__).resolve().parents[2] / "evals/research-value-v2/development"
         with patch("mathresearch.research.cli._prompt_session_usage", return_value=49), \
              patch("mathresearch.research.cli._run_evaluation_trial", return_value={
                  "status": "failed", "provider_calls": 0, "error": "fixture failure"}), \
              patch("mathresearch.research.cli._emit"):
             code = main(["evaluate", "--cases", str(cases), "--out-dir", str(self.root / "cli"),
-                "--model", "gpt-test", "--effort", "high", "--case-id", "perfect-six", "--replicates", "1",
+                "--model", "gpt-test", "--effort", "high", "--case-id", "dev-subset-sum-9", "--replicates", "1",
                 "--live", "--max-provider-calls", "10", "--max-wall-seconds", "100",
                 "--max-session-usage-percent", "10", "--json"])
         self.assertEqual(code, 11)

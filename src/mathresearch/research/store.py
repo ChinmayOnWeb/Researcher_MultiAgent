@@ -76,6 +76,8 @@ def _check_layout(run_dir: Path, snapshot: ResearchSnapshot, events: tuple[Resea
         if path.exists(): _safe_directory(path, run_dir)
     intended = {item.body["action_id"]: item.body for item in events if item.event_type == "action_intended"}
     finished = {item.body["action_id"]: item.body for item in events if item.event_type == "action_finished"}
+    attempt_intents = {item.body["attempt_id"]: item.body for item in events if item.event_type == "provider_attempt_intended"}
+    attempt_finished = {item.body["attempt_id"]: item.body for item in events if item.event_type == "provider_attempt_finished"}
     for action_id, outcome in finished.items():
         action_dir = run_dir / "actions" / action_id
         if not action_dir.exists():
@@ -89,13 +91,27 @@ def _check_layout(run_dir: Path, snapshot: ResearchSnapshot, events: tuple[Resea
         for action_dir in _checked_children(run_dir / "actions", run_dir, files=set(), directories=set(intended)).values():
             if action_dir.name not in intended: raise RunCorruptError(run_dir, "unauthorized action directory")
             _safe_directory(action_dir, run_dir)
-            _checked_children(action_dir, run_dir, files={"packet.json", "stdout.bin", "stderr.log", "result.json"}, directories=set(), immutable={"packet.json", "stdout.bin", "stderr.log", "result.json"})
+            action_attempts = {attempt_id for attempt_id, body in attempt_intents.items() if body["action_id"] == action_dir.name}
+            _checked_children(action_dir, run_dir, files={"packet.json", "stdout.bin", "stderr.log", "result.json"}, directories={"attempts"}, immutable={"packet.json", "stdout.bin", "stderr.log", "result.json"})
             packet = action_dir / "packet.json"
             if packet.exists() and packet.read_bytes() != canonical_json_bytes(intended[action_dir.name]["packet"]): raise RunCorruptError(run_dir, "packet projection mismatch")
             result = action_dir / "result.json"
             committed = finished.get(action_dir.name)
             if result.exists() and (committed is None or committed["result"] is None or result.read_bytes() != canonical_json_bytes(committed["result"])):
                 raise RunCorruptError(run_dir, "result projection mismatch")
+            attempts_dir = action_dir / "attempts"
+            if attempts_dir.exists():
+                _safe_directory(attempts_dir, run_dir)
+                for attempt_dir in _checked_children(attempts_dir, run_dir, files=set(), directories=action_attempts).values():
+                    body = attempt_intents[attempt_dir.name]
+                    if body["action_id"] != action_dir.name: raise RunCorruptError(run_dir, "attempt belongs to another action")
+                    _checked_children(attempt_dir, run_dir, files={"stdout.bin", "stderr.log"}, directories=set(), immutable={"stdout.bin", "stderr.log"})
+                    if attempt_dir.name in attempt_finished:
+                        outcome = attempt_finished[attempt_dir.name]
+                        for filename, digest_key in (("stdout.bin", "stdout_sha256"), ("stderr.log", "stderr_sha256")):
+                            capture = attempt_dir / filename
+                            if not capture.exists() or hashlib.sha256(capture.read_bytes()).hexdigest() != outcome[digest_key]:
+                                raise RunCorruptError(run_dir, "provider attempt capture digest mismatch")
     successful_tools = {action_id: outcome for action_id, outcome in finished.items() if outcome["outcome"] == "succeeded" and snapshot.actions[action_id]["kind"] == "tool"}
     if (run_dir / "tools").exists():
         for action_id, directory in _checked_children(run_dir / "tools", run_dir, files=set(), directories=set(successful_tools)).items():
@@ -113,7 +129,12 @@ def _materialize(run_dir: Path, snapshot: ResearchSnapshot, events: tuple[Resear
     init = events[0].body["request"]; request = run_dir / "request.json"
     if not request.exists(): _atomic_write_replace(request, canonical_json_bytes(init))
     for item in events:
-        if item.event_type == "action_intended":
+        if item.event_type == "provider_attempt_finished":
+            continue
+        elif item.event_type == "provider_attempt_intended":
+            directory = run_dir / "actions" / item.body["action_id"] / "attempts" / item.body["attempt_id"]
+            directory.mkdir(parents=True, exist_ok=True)
+        elif item.event_type == "action_intended":
             directory = run_dir / "actions" / item.body["action_id"]; directory.mkdir(parents=True, exist_ok=True)
             packet = directory / "packet.json"
             if not packet.exists(): _atomic_write_new(packet, canonical_json_bytes(item.body["packet"]))
@@ -159,6 +180,19 @@ class LockedResearchRun:
         if name not in {"stdout.bin", "stderr.log"} or action_id not in self._snapshot.actions: raise RunStoreError("unsafe capture target")
         directory = self.run_dir / "actions" / action_id; directory.mkdir(parents=True, exist_ok=True)
         _atomic_write_new(directory / name, data); return hashlib.sha256(data).hexdigest()
+    def write_attempt_capture(self, action_id: str, attempt_id: str, name: str, data: bytes) -> str:
+        if name not in {"stdout.bin", "stderr.log"} or attempt_id not in self._snapshot.attempts:
+            # During execution the attempt finish event is appended after captures,
+            # so authorize against its durable intent in the event journal.
+            authorized = any(item.event_type == "provider_attempt_intended" and
+                             item.body["attempt_id"] == attempt_id and item.body["action_id"] == action_id
+                             for item in self._events)
+            if name not in {"stdout.bin", "stderr.log"} or not authorized:
+                raise RunStoreError("unsafe provider attempt capture target")
+        directory = self.run_dir / "actions" / action_id / "attempts" / attempt_id
+        directory.mkdir(parents=True, exist_ok=True)
+        _atomic_write_new(directory / name, data)
+        return hashlib.sha256(data).hexdigest()
 
 
 def initialize_research(request_path: Path, run_dir: Path) -> ResearchSnapshot:
@@ -168,7 +202,7 @@ def initialize_research(request_path: Path, run_dir: Path) -> ResearchSnapshot:
     run_dir.mkdir(parents=True, exist_ok=True)
     from datetime import datetime, timezone
     occurred_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    event = ResearchEvent.from_json({"schema_version": 3, "record_type": "research_event", "sequence": 1, "event_type": "research_initialized", "run_id": request.run_id, "occurred_at": occurred_at, "body": {"request": request.to_json()}})
+    event = ResearchEvent.from_json({"schema_version": 4, "record_type": "research_event", "sequence": 1, "event_type": "research_initialized", "run_id": request.run_id, "occurred_at": occurred_at, "body": {"request": request.to_json()}})
     with acquire_run_lock(run_dir):
         if any(item.name != ".run.lock" for item in run_dir.iterdir()): raise RunStoreError("research destination is not empty")
         (run_dir / "events").mkdir(exist_ok=True)

@@ -1,8 +1,10 @@
-"""Public version-three research commands."""
+"""Public research commands for durable request versions three and four."""
 
 from __future__ import annotations
 
 import argparse
+import difflib
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -18,12 +20,14 @@ from mathresearch.errors import (ExitCode, InvalidInvocationError, RunLockedErro
                                  RunStoreError)
 from .engine import answer_research_gate, initialize, run_research
 from .events import ResearchSnapshot
-from .prompts import PROMPT_VERSION, build_prompt
+from .prompts import PROMPT_VERSION, build_prompt, structural_repair_prompt
 from .contracts import result_schema, validate_result
-from .provider import check_provider_observation, create_research_provider, parse_provider_observation
+from .provider import (check_provider_observation, count_session_id_markers,
+    create_research_provider, parse_provider_observation)
 from mathresearch.worker_process import execute_worker
 from .store import load_research_status
-from .evaluation import EvaluationStore, load_cases, make_manifest, run_paired_trials, write_json
+from .evaluation import (EvaluationStore, load_cases, make_manifest, run_paired_trials,
+                         write_json, _read_json)
 
 
 _RESULT_KEYS = ("run_status", "answer_status", "model_calls_used", "tool_calls_used",
@@ -46,10 +50,12 @@ def _parser() -> argparse.ArgumentParser:
 
     init = commands.add_parser("init", help="initialize a research request")
     source = init.add_mutually_exclusive_group(required=True)
-    source.add_argument("--request", type=Path, help="complete version-three request JSON")
+    source.add_argument("--request", type=Path, help="complete version-three or version-four request JSON")
     source.add_argument("--question", help="exact research question")
     init.add_argument("--objective", choices=("answer", "prove", "investigate"))
     init.add_argument("--mode", choices=("quick", "deep", "research"))
+    init.add_argument("--execution-policy", choices=("fixed", "sequential_review", "adaptive"),
+                      default="fixed")
     init.add_argument("--run-id")
     init.add_argument("--run-dir", required=True, type=Path)
     init.add_argument("--model")
@@ -75,15 +81,20 @@ def _parser() -> argparse.ArgumentParser:
                           help="reasoning effort selected on the effort control; frozen per comparison")
     evaluate.add_argument("--case-id", action="append",
                           help="restrict this evaluation to a named case; repeat for a bounded smoke set")
-    evaluate.add_argument("--condition", choices=("paired", "baseline", "pipeline"), default="paired",
-                          help="run paired evaluation, or only one condition")
+    evaluate.add_argument("--condition", choices=("paired", "repair-paired", "architecture", "baseline", "baseline_repair",
+        "sequential_review", "pipeline", "adaptive"), default="paired",
+                          help="run strict paired evaluation, repair-enabled baseline versus pipeline, or one condition")
     evaluate.add_argument("--replicates", type=int, default=3,
                           help="paired repetitions per selected case (default: 3)")
     evaluate.add_argument("--live", action="store_true", help="request provider-backed trials")
+    evaluate.add_argument("--dry-run-manifest", action="store_true",
+                          help="freeze schedule and worst-case resource projection without provider calls")
     evaluate.add_argument("--max-provider-calls", type=int)
     evaluate.add_argument("--max-wall-seconds", type=int)
     evaluate.add_argument("--max-session-usage-percent", type=float,
                           help="maximum percentage-point drop in the 5-hour quota remaining, from the saved start reading")
+    evaluate.add_argument("--prepare-grading-packets", action="store_true",
+                          help="freeze condition-blind packets for existing trial outputs")
     evaluate.add_argument("--json", action="store_true", dest="json_output")
     return parser
 
@@ -93,10 +104,12 @@ def _evaluate(arguments: argparse.Namespace) -> int:
         if arguments.max_provider_calls is None or arguments.max_wall_seconds is None:
             return _invalid("live evaluation requires explicit --max-provider-calls and --max-wall-seconds limits",
                             json_output=arguments.json_output)
-        if (arguments.max_provider_calls > 240 or arguments.max_wall_seconds > 7200 or
-                arguments.max_provider_calls < 1 or arguments.max_wall_seconds < 1):
-            return _invalid("live caps cannot exceed Astra's 240 calls and 7200 seconds",
+        if arguments.max_provider_calls < 1 or arguments.max_wall_seconds < 1:
+            return _invalid("live caps must be positive explicit values",
                             json_output=arguments.json_output)
+    if arguments.dry_run_manifest and arguments.live:
+        return _invalid("--dry-run-manifest cannot be combined with --live",
+                        json_output=arguments.json_output)
     try:
         all_cases, cases_hash, rubric_hash = load_cases(arguments.cases)
         known_case_ids = {case["id"] for case in all_cases}
@@ -111,29 +124,106 @@ def _evaluate(arguments: argparse.Namespace) -> int:
             cases = [case for case in all_cases if case["id"] in selected_ids]
         else:
             cases = all_cases
+        out_manifest_path = arguments.out_dir / "manifest.json"
+        saved_manifest = _read_json(out_manifest_path) if out_manifest_path.exists() else None
+        quick_cases = [case for case in cases if case["mode"] == "quick"]
+        if arguments.condition in {"repair-paired", "baseline_repair", "sequential_review", "adaptive"} and quick_cases:
+            # A mixed corpus can resume an arm that its saved per-case schedule
+            # excludes for Quick cases. New schedules still reject unsupported arms.
+            scheduled_by_case = (saved_manifest or {}).get("conditions_by_case", {})
+            quick_is_excluded = bool(saved_manifest) and all(
+                arguments.condition not in scheduled_by_case.get(case["id"],
+                    saved_manifest.get("conditions", ())) for case in quick_cases)
+            eligible_deep_cases = [case for case in cases if case["mode"] != "quick" and
+                arguments.condition in scheduled_by_case.get(case["id"],
+                    (saved_manifest or {}).get("conditions", ()))]
+            if not quick_is_excluded or not eligible_deep_cases:
+                raise ValidationError("condition", "this comparison requires Deep or Research cases; Quick supports only the fixed single-answer workflow")
         git = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[3],
             capture_output=True, text=True, check=False, timeout=10)
         git_sha = git.stdout.strip() if git.returncode == 0 else "unknown"
-        manifest = make_manifest(cases=cases, cases_hash=cases_hash, rubric_hash=rubric_hash,
-            model=arguments.model, effort=arguments.effort, git_sha=git_sha,
-            max_provider_calls=arguments.max_provider_calls if arguments.live else 240,
-            max_wall_seconds=arguments.max_wall_seconds if arguments.live else 7200,
-            max_session_usage_delta_percent=arguments.max_session_usage_percent or 10,
-            replicates=arguments.replicates)
-        if arguments.condition != "paired":
-            manifest["ordering"] = [dict(pair, conditions=[arguments.condition])
-                                     for pair in manifest["ordering"]]
+        requested_conditions = (("baseline_repair", "pipeline") if arguments.condition == "repair-paired"
+            else ("baseline", "sequential_review", "pipeline") if arguments.condition == "architecture"
+            else ("baseline", "pipeline") if arguments.condition == "paired"
+            else (arguments.condition,))
+        conditions_by_case = None
+        if arguments.condition == "architecture" and any(case["mode"] == "quick" for case in cases):
+            conditions_by_case = {case["id"]: ("baseline", "pipeline")
+                if case["mode"] == "quick" else requested_conditions for case in cases}
+        if out_manifest_path.exists():
+            manifest = saved_manifest
+            requested_conditions = tuple(manifest.get("conditions", ()))
+            if arguments.condition == "repair-paired" and not {"baseline_repair", "pipeline"}.issubset(requested_conditions):
+                raise ValidationError("condition", "repair-paired is not in the saved schedule")
+            if arguments.condition == "architecture" and not {"baseline", "sequential_review", "pipeline"}.issubset(requested_conditions):
+                raise ValidationError("condition", "architecture comparison is not in the saved schedule")
+            if arguments.condition not in {"paired", "repair-paired", "architecture"} and arguments.condition not in requested_conditions:
+                raise ValidationError("condition", "selected condition is not in the saved schedule")
+            if arguments.condition not in {"paired", "repair-paired", "architecture"}:
+                scheduled_by_case = manifest.get("conditions_by_case", {})
+                eligible_cases = [case for case in cases if arguments.condition in
+                    scheduled_by_case.get(case["id"], requested_conditions)]
+                if not eligible_cases:
+                    raise ValidationError("condition", "selected condition is not scheduled for any selected case")
+            if (manifest.get("cases_hash") != cases_hash or manifest.get("rubric_hash") != rubric_hash or
+                    manifest.get("case_ids") != [case["id"] for case in cases]):
+                raise ValidationError("manifest", "saved corpus or rubric differs from current inputs")
+            if manifest.get("model") != arguments.model or manifest.get("effort") != arguments.effort:
+                raise ValidationError("manifest", "saved model or effort differs from the requested run")
+            if manifest.get("replicates") != arguments.replicates:
+                raise ValidationError("manifest", "replicate count differs from the saved schedule")
+            caps = manifest["caps"]
+            if arguments.live and (arguments.max_provider_calls != caps["max_provider_calls"] or
+                    arguments.max_wall_seconds != caps["max_wall_seconds"]):
+                raise ValidationError("caps", "live caps must match the saved manifest when resuming")
+            if arguments.live and arguments.max_session_usage_percent is not None and \
+                    arguments.max_session_usage_percent != caps["max_session_usage_delta_percent"]:
+                raise ValidationError("caps", "session usage allowance must match the saved manifest when resuming")
+        else:
+            caps = {"max_provider_calls": arguments.max_provider_calls if arguments.max_provider_calls is not None else 1,
+                    "max_wall_seconds": arguments.max_wall_seconds if arguments.max_wall_seconds is not None else 1,
+                    "max_session_usage_delta_percent": (
+                        arguments.max_session_usage_percent
+                        if arguments.max_session_usage_percent is not None else 10)}
+            manifest = make_manifest(cases=cases, cases_hash=cases_hash, rubric_hash=rubric_hash,
+                model=arguments.model, effort=arguments.effort, git_sha=git_sha,
+                max_provider_calls=caps["max_provider_calls"],
+                max_wall_seconds=caps["max_wall_seconds"],
+                max_session_usage_delta_percent=caps["max_session_usage_delta_percent"],
+                replicates=arguments.replicates, conditions=requested_conditions,
+                conditions_by_case=conditions_by_case)
+            if arguments.dry_run_manifest:
+                projection = manifest["resource_projection"]
+                if (arguments.max_provider_calls is not None and
+                        arguments.max_provider_calls < projection["provider_calls_worst_case"]):
+                    raise ValidationError("max_provider_calls", "dry-run cap is below the projected worst case")
+                if (arguments.max_wall_seconds is not None and
+                        arguments.max_wall_seconds < projection["wall_seconds_worst_case"]):
+                    raise ValidationError("max_wall_seconds", "dry-run cap is below the projected worst case")
+                manifest["caps"]["max_provider_calls"] = (arguments.max_provider_calls
+                    if arguments.max_provider_calls is not None else projection["provider_calls_worst_case"])
+                manifest["caps"]["max_wall_seconds"] = (arguments.max_wall_seconds
+                    if arguments.max_wall_seconds is not None else projection["wall_seconds_worst_case"])
+                manifest["execution_authorization"] = "dry_run_only"
+            elif arguments.live:
+                manifest["execution_authorization"] = "live_explicit"
         store = EvaluationStore(arguments.out_dir, manifest)
         run_result = None
         if arguments.live:
+            selected_conditions = None if arguments.condition in {"paired", "repair-paired", "architecture"} else {arguments.condition}
             run_result = run_paired_trials(cases, store,
                 trial_runner=lambda case, condition, inputs, trial_dir, timeout:
                     _run_evaluation_trial(case, condition, inputs, trial_dir, timeout, manifest),
-                usage_checkpoint=None)
+                usage_checkpoint=None, selected_case_ids=set(requested_case_ids) if requested_case_ids else None,
+                selected_conditions=selected_conditions)
         comparison = store.finalize(store.grades(),
             deep_case_ids={case["id"] for case in cases if case["mode"] != "quick"},
             quick_case_ids={case["id"] for case in cases if case["mode"] == "quick"},
             required_replicates=int(manifest["replicates"]))
+        grading_packets = None
+        if arguments.prepare_grading_packets:
+            rubric_text = (arguments.cases / "rubric.md").read_text(encoding="utf-8")
+            grading_packets = store.prepare_grading_packets(cases, rubric_text)
     except (OSError, ValidationError, ValueError, RuntimeError) as error:
         return _invalid(f"evaluation preparation failed: {error}", json_output=arguments.json_output)
     payload = {"comparison_status": comparison["comparison_status"],
@@ -142,8 +232,13 @@ def _evaluate(arguments: argparse.Namespace) -> int:
                "comparison_path": str((arguments.out_dir / "comparison.json").resolve()),
                "reason": ("live trials stopped: " + str(run_result["stopped_reason"]) if run_result and run_result["stopped_reason"]
                           else "live trial outputs require independent semantic grades" if arguments.live
+                          else "dry-run manifest prepared; no provider calls were made" if arguments.dry_run_manifest
                           else "offline evaluation initialized; no provider calls were made"),
                "session_usage_monitoring": "disabled_by_user" if arguments.live else "not_applicable"}
+    if arguments.dry_run_manifest:
+        payload["resource_projection"] = manifest["resource_projection"]
+    if grading_packets is not None:
+        payload["grading_packets"] = grading_packets
     if run_result:
         payload["trial_conditions_recorded"] = len(run_result["trial_conditions_recorded"])
         payload["provider_calls_reserved"] = run_result["provider_calls_reserved"]
@@ -176,20 +271,27 @@ def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
                           pair_inputs: Mapping[str, Any], trial_dir: Path,
                           timeout_seconds: int, manifest: Mapping[str, Any]) -> dict[str, Any]:
     sources = list(pair_inputs["source_inputs"])
-    payload = build_request_payload(run_id=f"eval-{case['id']}-r{pair_inputs['replicate']}-{condition}",
+    payload = build_request_payload(run_id=(
+        f"eval-{case['id']}-r{pair_inputs['replicate']}-{condition.replace('_', '-')}"),
         question=case["question"], objective=case["objective"], mode=case["mode"],
-        model=manifest["model"])
+        model=manifest["model"], execution_policy={
+            "sequential_review": "sequential_review", "adaptive": "adaptive"}.get(condition, "fixed"))
     payload["provider"]["reasoning_effort"] = manifest["effort"]
+    if condition in {"pipeline", "sequential_review", "adaptive"}:
+        payload["budgets"]["max_repairs"] = manifest["retry_policy"][condition][
+            "structural_retries_by_mode"][case["mode"]]
     payload["sources"] = sources
-    payload["capabilities"] = {"fetch_sources": False,
-        "math_checks": bool(case.get("checks"))}
-    if not case.get("checks"):
+    capability_entry = manifest.get("capability_policy", {}).get(case["id"], {})
+    payload["capabilities"] = capability_entry.get("conditions", {}).get(condition,
+        case.get("capabilities", {"fetch_sources": False,
+            "math_checks": bool(case.get("checks"))}))
+    if not payload["capabilities"]["math_checks"]:
         payload["constraints"] = list(payload.get("constraints", [])) + [
             "Do not propose computational checks; return an empty proposed_checks list."]
     payload["budgets"]["max_wall_seconds"] = min(payload["budgets"]["max_wall_seconds"], timeout_seconds)
     payload["budgets"]["per_call_seconds"] = min(180, payload["budgets"]["max_wall_seconds"])
     request = ResearchRequest.from_json(payload)
-    if condition == "pipeline":
+    if condition in {"pipeline", "sequential_review", "adaptive"}:
         run_dir = trial_dir / "run"
         request_file = trial_dir / "request.json"
         request_file.write_text(json.dumps(request.to_json(), ensure_ascii=False), encoding="utf-8")
@@ -197,11 +299,17 @@ def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
         worker_tmp = trial_dir / "worker-tmp"
         worker_tmp.mkdir(parents=True, exist_ok=True)
         snapshot = run_research(run_dir, scratch_parent=worker_tmp)
-        # Smoke evaluations are noninteractive.  Preserve the gate as an
-        # explicit qualified decision so a missing independent certificate
-        # cannot silently become a verified result or stall the paired run.
-        if snapshot.status == "awaiting_human" and snapshot.pending_gate is not None:
+        # Smoke evaluations are noninteractive. Continue only through gates
+        # that explicitly allow a limited, qualified run; never supply sources
+        # or turn missing evidence into verification.
+        gate_responses = 0
+        while snapshot.status == "awaiting_human" and snapshot.pending_gate is not None:
             gate = snapshot.pending_gate
+            if "continue_limited" not in gate.get("allowed_response", []):
+                break
+            gate_responses += 1
+            if gate_responses > request.budgets["max_model_calls"]:
+                break
             response = {"schema_version": 3, "record_type": "research_gate_response",
                         "gate_id": gate["gate_id"],
                         "response_id": f"smoke-continue-{gate['gate_id']}",
@@ -215,13 +323,26 @@ def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
         observed_models = {item.get("model_observed") for item in telemetry}
         observed_efforts = {item.get("effort_observed") for item in telemetry}
         errors = [str(item["error"]) for item in snapshot.outcomes.values() if item.get("error")]
+        protocol_invalid = any(item.get("outcome") == "protocol_error"
+                               for item in snapshot.outcomes.values())
         return {"status": "complete" if snapshot.status == "complete" else "failed",
                 "provider_calls": snapshot.model_calls_used, "report": report,
+                "tool_calls_used": snapshot.tool_calls_used,
+                "protocol_validity": ("valid" if snapshot.status == "complete" else
+                    "invalid" if protocol_invalid else "unavailable"),
+                "final_status": (snapshot.final_assessment.get("answer_status")
+                    if isinstance(snapshot.final_assessment, Mapping) else snapshot.status),
                 "cost_usd": None,
                 "error": "; ".join(errors) or (snapshot.reason if snapshot.status != "complete" else None),
                 "observed_model": next(iter(observed_models)) if len(observed_models) == 1 else None,
                 "observed_effort": next(iter(observed_efforts)) if len(observed_efforts) == 1 else None,
-                "input_tokens": None, "output_tokens": None}
+                "input_tokens": None, "output_tokens": None,
+                "failure_class": ("provider_usage_limit" if any(
+                    marker in ("; ".join(errors)).lower() for marker in
+                    ("usage limit", "rate limit", "quota exceeded", "too many requests"))
+                    else None),
+                "observed_session_markers": (None if snapshot.pending_attempt_id else
+                    sum(item.get("session_id_marker_count", 0) for item in snapshot.attempts.values()))}
 
     source_map = {item["id"]: SourceInput.from_json(item, field="evaluation.source",
         fetch_sources=False).to_json() for item in sources}
@@ -229,7 +350,7 @@ def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
         "objective": case["objective"], "question": case["question"], "goal": None,
         "context": None, "constraints": [], "audience": "unspecified", "sources": source_map,
         "tool_results": {}, "inputs": {}, "additional_user_input": [],
-        "output_schema": result_schema("answer")}
+        "output_schema": result_schema("answer", PROMPT_VERSION)}
     prompt = build_prompt("answer", packet)
     preflight_started = time.monotonic()
     try:
@@ -245,28 +366,90 @@ def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
                 "error": "wall-time budget expired during provider preflight"}
     scratch = trial_dir / "scratch"
     scratch.mkdir(parents=True, exist_ok=True)
-    output = execute_worker(adapter, WorkerInput("baseline", prompt, result_schema("answer")),
+    output = execute_worker(adapter, WorkerInput("baseline", prompt, result_schema("answer", PROMPT_VERSION)),
         scratch=scratch, timeout_seconds=worker_timeout)
     (trial_dir / "stdout.bin").write_bytes(output.stdout)
     (trial_dir / "stderr.log").write_bytes(output.stderr)
+    initial_output = output
     write_json(trial_dir / "provider-result.json", {
         "outcome": output.outcome, "exit_code": output.exit_code,
         "error": output.error, "payload": output.payload})
     observed = parse_provider_observation(output.stderr)
     mismatch = check_provider_observation(request, observed)
+    provider_calls = 0 if output.outcome == "launch_failed" else 1
     report = None
     status = "failed"
+    result = None
+    validation_error = None
     if output.outcome == "succeeded" and output.payload is not None and mismatch is None:
         try:
-            result = validate_result("answer", output.payload)
+            result = validate_result("answer", output.payload, prompt_version=PROMPT_VERSION)
         except ValidationError as error:
-            return {"status": "failed", "provider_calls": 1, "report": None,
-                    "cost_usd": None, "observed_model": observed.get("model"),
-                    "observed_effort": observed.get("effort"),
-                    "input_tokens": None, "output_tokens": None,
-                    "provider_outcome": output.outcome, "provider_exit_code": output.exit_code,
-                    "error": f"baseline result schema error: {error}"}
-        lines = ["# Single-call baseline", "",
+            validation_error = error
+            if condition == "baseline_repair":
+                repair_prompt = structural_repair_prompt(prompt, output.payload, error,
+                                                         require_change_log=True)
+                remaining = int(timeout_seconds - (time.monotonic() - preflight_started))
+                if remaining > 0:
+                    repair_scratch = trial_dir / "repair-scratch"
+                    repair_scratch.mkdir(parents=True, exist_ok=True)
+                    repaired = execute_worker(adapter, WorkerInput(
+                        "baseline-structural-repair", repair_prompt, result_schema("answer", PROMPT_VERSION)),
+                        scratch=repair_scratch, timeout_seconds=min(180, remaining))
+                    if repaired.outcome != "launch_failed":
+                        provider_calls += 1
+                    (trial_dir / "repair.stdout.bin").write_bytes(repaired.stdout)
+                    (trial_dir / "repair.stderr.log").write_bytes(repaired.stderr)
+                    write_json(trial_dir / "provider-result-repair.json", {
+                        "outcome": repaired.outcome, "exit_code": repaired.exit_code,
+                        "error": repaired.error, "payload": repaired.payload})
+                    before_text = json.dumps(output.payload, ensure_ascii=False, indent=2, sort_keys=True).splitlines()
+                    after_text = json.dumps(repaired.payload, ensure_ascii=False, indent=2, sort_keys=True).splitlines() if repaired.payload is not None else []
+                    (trial_dir / "repair-review.diff").write_text("\n".join(difflib.unified_diff(
+                        before_text, after_text, fromfile="rejected-payload", tofile="corrected-payload",
+                        lineterm="")) + "\n", encoding="utf-8")
+                    output = repaired
+                    observed = parse_provider_observation(repaired.stderr)
+                    mismatch = check_provider_observation(request, observed)
+                    if repaired.outcome == "succeeded" and repaired.payload is not None and mismatch is None:
+                        try:
+                            result = validate_result("answer", repaired.payload,
+                                                     prompt_version=PROMPT_VERSION)
+                            if (not result["change_log"] or
+                                    result["change_log"] == initial_output.payload.get("change_log", [])):
+                                raise ValidationError("change_log", "structural repair must record its change explanation")
+                            validation_error = None
+                        except ValidationError as repair_error:
+                            validation_error = repair_error
+            if result is None:
+                review_payload = (output.payload if isinstance(output.payload, Mapping)
+                                  else initial_output.payload)
+                combined_error = "; ".join(value for value in (
+                    f"initial schema error: {validation_error}" if validation_error else None,
+                    mismatch, output.error) if value)
+                error_lower = combined_error.lower()
+                failure_class = ("provider_usage_limit" if any(marker in error_lower for marker in
+                    ("usage limit", "rate limit", "quota exceeded", "too many requests"))
+                    else "provider_failure" if output.payload is None and provider_calls > 1
+                    else "schema_rejection")
+                return {"status": "failed", "provider_calls": provider_calls, "report": None,
+                        "cost_usd": None, "observed_model": observed.get("model"),
+                        "observed_effort": observed.get("effort"), "input_tokens": None,
+                        "output_tokens": None, "provider_outcome": output.outcome,
+                        "provider_exit_code": output.exit_code,
+                        "observed_session_markers": count_session_id_markers(initial_output.stderr) +
+                            (count_session_id_markers(output.stderr) if output is not initial_output else 0),
+                        "artifact_sha256": hashlib.sha256(json.dumps(review_payload,
+                            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                            allow_nan=False).encode("utf-8")).hexdigest()
+                            if review_payload is not None else None,
+                        "protocol_validity": ("invalid" if validation_error is not None or
+                            isinstance(review_payload, Mapping) else "unavailable"),
+                        "failure_class": failure_class,
+                        "final_status": review_payload.get("question_status")
+                            if isinstance(review_payload, Mapping) else None,
+                        "error": combined_error or "baseline repair returned no valid result"}
+        lines = ["# " + ("Repair-enabled baseline" if condition == "baseline_repair" else "Single-call baseline"), "",
             f"Requested model: `{manifest['model']}`; requested effort: `{manifest['effort']}`.",
             "This is one unaudited answer. The paired pipeline received the same question, "
             "source text, and evaluator-supplied check transcripts.", "", "## Inputs", ""]
@@ -282,8 +465,20 @@ def _run_evaluation_trial(case: Mapping[str, Any], condition: str,
         status = "complete"
     if report is not None:
         (trial_dir / "report.md").write_text(report, encoding="utf-8")
-    return {"status": status, "provider_calls": 0 if output.outcome == "launch_failed" else 1,
+    return {"status": status, "provider_calls": provider_calls,
+            "tool_calls_used": 0,
             "report": report,
+            "artifact_sha256": (hashlib.sha256(json.dumps(output.payload,
+                ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                allow_nan=False).encode("utf-8")).hexdigest() if output.payload is not None else None),
+            "protocol_validity": "valid" if status == "complete" else "unavailable",
+            "final_status": (output.payload.get("question_status")
+                             if isinstance(output.payload, Mapping) else None),
+            "failure_class": ("provider_usage_limit" if any(marker in
+                " ".join((str(output.error or ""), output.stderr.decode("utf-8", "replace"))).lower()
+                for marker in ("usage limit", "rate limit", "quota exceeded", "too many requests"))
+                else None),
+            "observed_session_markers": count_session_id_markers(output.stderr),
             "cost_usd": None, "observed_model": observed.get("model"),
             "observed_effort": observed.get("effort"),
             "input_tokens": None, "output_tokens": None,
@@ -346,7 +541,7 @@ def _store_error(error: RunStoreError, *, run_dir: Path, json_output: bool) -> i
 def _request_from_args(arguments: argparse.Namespace) -> dict[str, Any]:
     flags = (arguments.objective, arguments.mode, arguments.run_id, arguments.model)
     if arguments.request is not None:
-        if any(value is not None for value in flags) or arguments.goal is not None or arguments.context is not None or arguments.constraint:
+        if any(value is not None for value in flags) or arguments.goal is not None or arguments.context is not None or arguments.constraint or arguments.execution_policy != "fixed":
             raise InvalidInvocationError("--request cannot be combined with question-building options")
         try:
             return ResearchRequest.from_json(json.loads(arguments.request.read_text(encoding="utf-8"))).to_json()
@@ -357,7 +552,8 @@ def _request_from_args(arguments: argparse.Namespace) -> dict[str, Any]:
         raise InvalidInvocationError("question form requires --" + ", --".join(missing))
     payload = build_request_payload(run_id=arguments.run_id, question=arguments.question,
         objective=arguments.objective, mode=arguments.mode, model=arguments.model,
-        goal=arguments.goal, context=arguments.context, constraints=arguments.constraint)
+        goal=arguments.goal, context=arguments.context, constraints=arguments.constraint,
+        execution_policy=arguments.execution_policy)
     return ResearchRequest.from_json(payload).to_json()
 
 

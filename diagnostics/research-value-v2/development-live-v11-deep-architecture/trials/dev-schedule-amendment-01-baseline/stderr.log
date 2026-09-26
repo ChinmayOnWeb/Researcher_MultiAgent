@@ -1,0 +1,5 @@
+WARNING: failed to clean up stale arg0 temp dirs: Access is denied. (os error 5)
+WARNING: proceeding, even though we could not create PATH aliases: Access is denied. (os error 5) at path "C:\\Users\\Chinmay\\.codex\\tmp\\arg0\\codex-arg0YaRlfz"
+2026-09-25T06:33:45.312996Z  WARN codex_state::runtime: failed to open state db at C:\Users\Chinmay\.codex\state_5.sqlite: failed to open state DB at C:\Users\Chinmay\.codex\state_5.sqlite: error returned from database: (code: 8) attempt to write a readonly database
+2026-09-25T06:33:45.313188Z  WARN codex_rollout::state_db: failed to initialize state runtime: failed to initialize state runtime at C:\Users\Chinmay\.codex: failed to open state DB at C:\Users\Chinmay\.codex\state_5.sqlite: error returned from database: (code: 8) attempt to write a readonly database: error returned from database: (code: 8) attempt to write a readonly database: (code: 8) attempt to write a readonly database
+Error: failed to initialize in-process app-server client: Access is denied. (os error 5)

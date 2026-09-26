@@ -6,6 +6,8 @@ import json
 import unittest
 from pathlib import Path
 
+from mathresearch.research.evaluation import load_cases as load_evaluation_cases, worker_case
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 CASES_PATH = REPOSITORY_ROOT / "evals" / "research-quality" / "cases.json"
@@ -19,11 +21,11 @@ def load_cases() -> list[dict[str, object]]:
 class ResearchQualityCasesTest(unittest.TestCase):
     def test_cases_include_quality_failures_not_just_happy_path(self) -> None:
         cases = load_cases()
-        self.assertEqual(len(cases), 8)
-        self.assertEqual(len({case["id"] for case in cases}), 8)
+        self.assertEqual(len(cases), 3)
+        self.assertEqual(len({case["id"] for case in cases}), 3)
         by_id = {case["id"]: case for case in cases}
-        self.assertIn("division by zero", " ".join(by_id["false-cancellation"]["expected_obligations"]))
-        self.assertEqual(len(by_id["source-conflict"]["sources"]), 2)
+        self.assertIn("minimal polynomial", by_id["algebraic-certificate"]["question"])
+        self.assertTrue(by_id["domino-tilings"]["sources"])
 
     def test_all_cases_have_nonempty_obligations_and_forbidden_claims(self) -> None:
         for case in load_cases():
@@ -31,14 +33,18 @@ class ResearchQualityCasesTest(unittest.TestCase):
                 self.assertTrue(case["expected_obligations"])
                 self.assertTrue(case["forbidden_claims"])
 
-    def test_odd_perfect_question_preserves_the_requested_task(self) -> None:
-        case = next(case for case in load_cases() if case["id"] == "odd-perfect-status")
-        self.assertEqual(
-            case["question"],
-            "What do the supplied notes establish about odd perfect numbers, and what would be needed to go further?",
-        )
-        self.assertNotIn("concise", case["objective"].lower())
-        self.assertNotIn("general-audience", case["objective"].lower())
+    def test_value_v2_sets_are_separate_and_truth_stays_out_of_worker_packets(self) -> None:
+        development_dir = REPOSITORY_ROOT / "evals" / "research-value-v2" / "development"
+        heldout_dir = REPOSITORY_ROOT / "evals" / "research-value-v2" / "held-out"
+        development, _, _ = load_evaluation_cases(development_dir)
+        heldout, _, _ = load_evaluation_cases(heldout_dir)
+        self.assertEqual(len(development), 6)
+        self.assertEqual(len(heldout), 6)
+        self.assertFalse({case["id"] for case in development} & {case["id"] for case in heldout})
+        for case in development + heldout:
+            packet = worker_case(case)
+            self.assertNotIn("expected_obligations", packet)
+            self.assertNotIn("forbidden_claims", packet)
 
     def test_circular_support_fixture_is_labeled_as_invalid_evidence(self) -> None:
         fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))

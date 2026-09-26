@@ -1,0 +1,16 @@
+{
+  "artifact_sha256": "49ff6878604c8eb4710b9588df126518eef8d4427c8922c953abbc8694c62767",
+  "case_id": "probability-overlap-hh",
+  "exit_code": 0,
+  "failure_class": "schema_rejection",
+  "fixture_kind": "captured_provider_payload",
+  "outcome": "succeeded",
+  "protocol_validity": "invalid",
+  "response_file": "response.json",
+  "source_file": "runs/ten-styles-live-approved-20260923-probability-overlap-hh/trials/probability-overlap-hh-01-baseline/provider-result.json",
+  "source_run": "runs/ten-styles-live-approved-20260923-probability-overlap-hh",
+  "source_trial": "runs/ten-styles-live-approved-20260923-probability-overlap-hh/trials/probability-overlap-hh-01-baseline",
+  "synthetic": false,
+  "validation_error": "proof_steps[1].depends_on[0]: unknown proof_steps reference 'state-def'",
+  "validation_details": {"json_path": "proof_steps[1].depends_on[0]", "bad_reference": "state-def", "expected_namespace": "proof_steps", "available_ids": ["first-step", "solve-system", "tail-bound"]}
+}

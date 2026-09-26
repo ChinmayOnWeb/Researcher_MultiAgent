@@ -17,7 +17,8 @@ class ResearchProvenanceTests(unittest.TestCase):
 
     def cited_draft(self, *, source_id: str = "note-a", quote: str = "supplied") -> dict[str, object]:
         draft = valid_draft()
-        draft["claims"][0].update({"kind": "source_assertion", "citations": [
+        draft["claims"][0].update({"kind": "source_assertion", "basis": "external_fact",
+            "basis_reference": "The supplied note", "scope_step_ids": [], "discharged_by_step_ids": [], "citations": [
             {"source_id": source_id, "start": 2, "end": 2 + len(quote), "quote": quote}]})
         return draft
 
@@ -48,8 +49,11 @@ class ResearchProvenanceTests(unittest.TestCase):
         successful = invalid | {"status": "succeeded", "result": {"n": 6,
             "proper_divisors": [1, 2, 3], "proper_divisor_sum": 6, "is_perfect": True}, "error": None}
         self.assertEqual(check_provenance(draft, {}, {"check-one": successful}), [])
+        draft["claims"][0].update({"basis": "derivation", "basis_reference": "receipt check",
+            "scope_step_ids": [], "discharged_by_step_ids": []})
         audit = {"checks": [{"claim_id": "claim-one", "verdict": "supported",
-            "reasoning": "The encoded check matches.", "checked_step_ids": []}],
+            "reasoning": "The encoded check matches.", "checked_step_ids": [],
+            "basis_verdict": "applicable", "basis_reasoning": "The named derivation is evaluated."}],
             "challenges": [{"claim_id": "claim-one", "attack": "Check the divisors.",
                 "result": "The receipt sums to six.", "outcome": "survives", "tool_ids": ["check-one"]}],
             "missing_evidence": [], "tool_requests": [], "recommended_action": "finish"}
@@ -65,8 +69,11 @@ class ResearchProvenanceTests(unittest.TestCase):
             "result": {"n": 6, "proper_divisors": [1, 2, 3], "proper_divisor_sum": 6,
                        "is_perfect": True}, "error": None, "scope": "initial",
             "implementation_version": "mathresearch-broker-v1"}
+        draft["claims"][0].update({"basis": "derivation", "basis_reference": "definition checked",
+            "scope_step_ids": [], "discharged_by_step_ids": []})
         audit = {"checks": [{"claim_id": "claim-one", "verdict": "supported",
-            "reasoning": "Checked.", "checked_step_ids": []}],
+            "reasoning": "Checked.", "checked_step_ids": [],
+            "basis_verdict": "applicable", "basis_reasoning": "The named derivation is evaluated."}],
             "challenges": [{"claim_id": "claim-one", "attack": "Check the value.",
             "result": "The receipt agrees.", "outcome": "survives", "tool_ids": ["check-one"]}],
             "missing_evidence": [], "tool_requests": [], "recommended_action": "finish"}

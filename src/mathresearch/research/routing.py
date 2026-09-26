@@ -41,11 +41,14 @@ def assess_latest(snapshot: ResearchSnapshot) -> dict[str, Any]:
                 "computation_status": "performed" if any(r.get("status") == "succeeded" for r in snapshot.tool_results.values()) else "not_performed",
                 "formal_status": "not_performed", "claim_findings": [], "unresolved": ["no_draft"]}
     draft_action, draft = selected
-    audit_pair = _latest(snapshot, "audit")
+    visible_sources, visible_tool_results = visible_evidence(snapshot, draft_action)
+    latest_audit_pair = _latest(snapshot, "audit")
+    audit_pair = (latest_audit_pair if latest_audit_pair and
+        draft_action["id"] in latest_audit_pair[0].get("dependencies", []) else None)
     audit = None
     audit_sources: Mapping[str, Any] | None = None
     audit_tool_results: Mapping[str, Any] | None = None
-    if audit_pair and draft_action["id"] in audit_pair[0].get("dependencies", []):
+    if audit_pair:
         audit = audit_pair[1]
         try:
             audit_packet = json.loads(snapshot.intent_packets[audit_pair[0]["id"]])
@@ -54,17 +57,61 @@ def assess_latest(snapshot: ResearchSnapshot) -> dict[str, Any]:
         except (KeyError, TypeError, ValueError):
             audit_sources = {}
             audit_tool_results = {}
-    try:
-        draft_packet = json.loads(snapshot.intent_packets[draft_action["id"]])
-        visible_sources = draft_packet["sources"]
-        visible_tool_results = draft_packet["tool_results"]
-    except (KeyError, TypeError, ValueError):
-        visible_sources = {}
-        visible_tool_results = {}
-    return assess(draft, visible_sources, visible_tool_results, audit=audit,
+    assessment = assess(draft, visible_sources, visible_tool_results, audit=audit,
                   audit_sources=audit_sources, audit_tool_results=audit_tool_results,
                   run_tool_results=snapshot.tool_results,
-                  objective=snapshot.request.objective)
+                  objective=snapshot.request.objective, question=snapshot.request.question,
+                  goal=snapshot.request.goal or "")
+    return _with_assessment_identity(snapshot, draft_action, draft, audit_pair if audit is not None else None, assessment)
+
+
+def _with_assessment_identity(snapshot: ResearchSnapshot, draft_action: Mapping[str, Any],
+                              draft: Mapping[str, Any], audit_pair: Any,
+                              assessment: dict[str, Any]) -> dict[str, Any]:
+    draft_bytes = json.dumps(draft, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    audit_id = audit_pair[0]["id"] if audit_pair else None
+    audit_hash = None
+    if audit_pair:
+        audit_bytes = json.dumps(audit_pair[1], sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        audit_hash = hashlib.sha256(audit_bytes).hexdigest()
+    assessment.update({"draft_id": draft_action["id"], "draft_hash": hashlib.sha256(draft_bytes).hexdigest(),
+        "audit_id": audit_id, "audit_hash": audit_hash,
+        "evidence_hash": hashlib.sha256(json.dumps({"draft_packet": visible_evidence(snapshot, draft_action),
+            "audit_packet": visible_evidence(snapshot, audit_pair[0]) if audit_pair else None}, sort_keys=True,
+            separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest(),
+        "objection_history": _objection_history(snapshot, draft_action["id"])})
+    return assessment
+
+
+def visible_evidence(snapshot: ResearchSnapshot, action: Mapping[str, Any]) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+    try:
+        packet = json.loads(snapshot.intent_packets[action["id"]])
+        return packet["sources"], packet["tool_results"]
+    except (KeyError, TypeError, ValueError):
+        return {}, {}
+
+
+def _objection_history(snapshot: ResearchSnapshot, selected_draft_id: str) -> list[dict[str, Any]]:
+    history: list[dict[str, Any]] = []
+    for action_id, audit in snapshot.results.items():
+        action = snapshot.actions.get(action_id, {})
+        if action.get("role") != "audit":
+            continue
+        packet_raw = snapshot.intent_packets.get(action_id)
+        try:
+            packet = json.loads(packet_raw) if packet_raw is not None else {}
+            audited_draft_id = packet.get("inputs", {}).get("draft_id")
+        except (TypeError, ValueError):
+            audited_draft_id = None
+        if audited_draft_id is None:
+            audited_draft_id = next((dependency for dependency in action.get("dependencies", [])
+                if dependency in snapshot.actions and snapshot.actions[dependency].get("role") in
+                {"answer", "branch", "synthesize", "revise"}), None)
+        for challenge in audit.get("challenges", []):
+            history.append({"audit_id": action_id, "draft_id": audited_draft_id,
+                "claim_id": challenge["claim_id"], "outcome": challenge["outcome"],
+                "attack": challenge["attack"], "active": audited_draft_id == selected_draft_id})
+    return history
 
 
 def _details(snapshot: ResearchSnapshot, *, selected: str | None = None,
@@ -97,7 +144,7 @@ def _worker(snapshot: ResearchSnapshot, role: str, reason: str, *, branch: str |
                        blockers=combined + ["model call budget exhausted"])
     action = {"id": _action_id(snapshot), "kind": "worker", "role": role, "branch": branch,
               "round": min(2, round_number), "dependencies": dependencies or [],
-              "payload": {"prompt_version": "research-v1"}}
+              "payload": {"prompt_version": "research-v5"}}
     return Decision("worker", reason, action,
                     _details(snapshot, selected=selected, audit_id=audit_id,
                              blockers=combined, round_number=round_number))
@@ -154,6 +201,71 @@ def _question_status(draft: Mapping[str, Any], audit: Mapping[str, Any] | None) 
     return "unresolved"
 
 
+def _policy_decision(snapshot: ResearchSnapshot, *, adaptive: bool) -> Decision:
+    """Run a draft/review loop and take only a recorded, bounded next step."""
+    request = snapshot.request
+    draft_pair = _latest(snapshot, "revise") or _latest(snapshot, "answer")
+    if draft_pair is None:
+        return _worker(snapshot, "answer", "adaptive_initial_draft" if adaptive else
+                       "sequential_initial_draft")
+    draft_action, draft = draft_pair
+    audit_pair = _latest(snapshot, "audit")
+    if audit_pair is None or draft_action["id"] not in audit_pair[0].get("dependencies", []):
+        return _worker(snapshot, "audit", "adaptive_independent_review" if adaptive else
+                       "sequential_independent_review", dependencies=[draft_action["id"]],
+                       selected=draft_action["id"], round_number=draft_action.get("round", 0))
+    audit_action, audit = audit_pair
+    assessment = assess_latest(snapshot)
+    blockers = list(assessment.get("unresolved", []))
+    if assessment.get("answer_status") in {"supported_within_scope", "conditional"} and not blockers:
+        return _finish(snapshot, "adaptive_obligations_satisfied" if adaptive else
+                       "sequential_review_complete", "complete", selected=draft_action["id"],
+                       audit_id=audit_action["id"], assessment=assessment,
+                       question_status=_question_status(draft, audit))
+
+    round_number = audit_action.get("round", 0) + 1
+    if request.capabilities["math_checks"]:
+        existing = {_tool_fingerprint(action["role"], action.get("payload", {}).get("arguments", {}))
+                    for action_id, action in snapshot.actions.items()
+                    if action_id in snapshot.results and action.get("kind") == "tool"}
+        for proposed in audit.get("tool_requests", []):
+            fingerprint = _tool_fingerprint(proposed["operation"], proposed["arguments"])
+            if fingerprint not in existing and snapshot.tool_calls_used < request.budgets["max_tool_calls"]:
+                return _tool(snapshot, proposed, "adaptive_targeted_check" if adaptive else
+                    "sequential_review_check",
+                    round_number=round_number, dependencies=[audit_action["id"]],
+                    selected=draft_action["id"], audit_id=audit_action["id"],
+                    blockers=[f"unmet obligation: {item}" for item in blockers] +
+                        ["Expected new evidence: a deterministic receipt for the audit's requested check."])
+    if audit.get("recommended_action") == "request_sources":
+        gate_reason = "adaptive_request_evidence" if adaptive else "sequential_request_evidence"
+        already_asked = any(decision.get("reason_code") == gate_reason and
+                            decision.get("details", {}).get("audit_id") == audit_action["id"]
+                            for decision in snapshot.decisions)
+        if not already_asked:
+            questions = audit.get("missing_evidence") or blockers or ["Supply evidence needed by the current audit."]
+            return _gate(snapshot, "request_evidence", gate_reason,
+                [f"Unmet obligation: {item}" for item in questions],
+                ["supply", "continue_limited", "cancel"], round_number=round_number)
+    calls_left = request.budgets["max_model_calls"] - snapshot.model_calls_used
+    can_revise = snapshot.repairs_started < request.budgets["max_repairs"]
+    if can_revise and calls_left >= 1:
+        return _worker(snapshot, "revise", "adaptive_address_obligation" if adaptive else
+            "sequential_address_review", round_number=round_number,
+            dependencies=[draft_action["id"], audit_action["id"]],
+            selected=draft_action["id"], audit_id=audit_action["id"],
+            blockers=[f"unmet obligation: {item}" for item in blockers] +
+                     ["Expected new evidence: a revised proof addressing these audit findings."] or
+                     ["The audit did not establish that every central obligation is covered."])
+    return _finish(snapshot, "adaptive_limits_prevented_followup" if adaptive else
+        "sequential_limits_prevented_followup",
+        "incomplete" if calls_left <= 0 else "complete",
+        selected=draft_action["id"], audit_id=audit_action["id"],
+        assessment=assessment, blockers=blockers or
+        ["No bounded review or revision budget remains."],
+        question_status=_question_status(draft, audit))
+
+
 def _next_decision(snapshot: ResearchSnapshot) -> Decision:
     """Return the next bounded action from a validated snapshot, without side effects."""
     request = snapshot.request
@@ -176,6 +288,11 @@ def _next_decision(snapshot: ResearchSnapshot) -> Decision:
            for action_id in snapshot.actions):
         return _finish(snapshot, "action_failed", "incomplete", assessment=assess_latest(snapshot),
                        blockers=["a completed action has no validated result"])
+
+    if request.execution_policy == "adaptive":
+        return _policy_decision(snapshot, adaptive=True)
+    if request.execution_policy == "sequential_review":
+        return _policy_decision(snapshot, adaptive=False)
 
     completed = [a for aid, a in snapshot.actions.items() if aid in snapshot.results]
     successful = {a["id"] for a in completed}
@@ -261,7 +378,7 @@ def _next_decision(snapshot: ResearchSnapshot) -> Decision:
         return _worker(snapshot, "audit", "challenge_claims", dependencies=[current_action["id"]],
                        selected=current_action["id"], round_number=current_action["round"])
     audit_action, audit = audit_pair
-    assessment = assess(current_draft, snapshot.sources, snapshot.tool_results, audit=audit, objective=request.objective)
+    assessment = assess_latest(snapshot)
     existing = set()
     for action in completed:
         if action["kind"] == "tool": existing.add(_tool_fingerprint(action["role"], action["payload"]["arguments"]))

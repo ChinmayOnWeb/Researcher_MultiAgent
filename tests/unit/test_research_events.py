@@ -151,7 +151,7 @@ class ResearchEventTests(unittest.TestCase):
         receipt = replayed.tool_results["a0001"]
         worker_action = {"id": "a0002", "kind": "worker", "role": "answer", "branch": None,
                          "round": 0, "dependencies": ["a0001"],
-                         "payload": {"prompt_version": "research-v1"}}
+                         "payload": {"prompt_version": "research-v3"}}
         packet = {"tool_results": {"a0001": receipt}}
         with_prior_receipt = history + [
             event(5, "provider_configured", provider_config()),

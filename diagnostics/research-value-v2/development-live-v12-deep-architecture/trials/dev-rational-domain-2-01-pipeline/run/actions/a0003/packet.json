@@ -1,0 +1,1 @@
+{"action_id":"a0003","capabilities":{"fetch_sources":false,"math_checks":true},"request":{"arguments":{"hi":2,"lhs":[-4,0,1],"lo":0,"rhs":[-4,0,1]},"id":"chk-factor","operation":"check_polynomial"},"scope":"Coordinator-authorized check_polynomial operation with exact validated arguments.","version":"broker-request-v1"}

@@ -16,10 +16,12 @@ class ResearchReportingTests(unittest.TestCase):
         state = snapshot(); candidate = copy.deepcopy(state.results["draft-one"])
         candidate["claims"][0].update({"kind": "deduction", "step_ids": ["step-one"],
                                         "tool_ids": ["check-one"]})
+        candidate["claims"][0].update({"basis": "derivation", "basis_reference": "The checked step"})
         candidate["proof_steps"] = [{"id": "step-one", "statement": "Use the check.",
             "justification": "The receipt encodes the calculation.", "depends_on": [], "citations": []}]
         review = copy.deepcopy(state.results["audit-one"])
         review["checks"][0]["verdict"] = "supported"
+        review["checks"][0].update({"basis_verdict": "applicable", "basis_reasoning": "The cited computation is applied."})
         review["challenges"][0]["tool_ids"] = ["check-one"]
         packet = {"sources": dict(state.sources), "tool_results": {}}
         audit_packet = {"sources": dict(state.sources), "tool_results": {"check-one": tool_receipt()}}
@@ -51,9 +53,11 @@ class ResearchReportingTests(unittest.TestCase):
     def test_scoped_deduction_is_supported_without_claiming_formal_proof(self) -> None:
         state = snapshot(); candidate = copy.deepcopy(state.results["draft-one"])
         candidate["claims"][0]["kind"] = "deduction"
+        candidate["claims"][0].update({"basis": "derivation", "basis_reference": "check-one"})
         candidate["claims"][0]["tool_ids"] = ["check-one"]
         review = copy.deepcopy(state.results["audit-one"])
         review["checks"][0]["verdict"] = "supported"
+        review["checks"][0].update({"basis_verdict": "applicable", "basis_reasoning": "Valid derivation."})
         review["challenges"][0].update({"outcome": "survives", "tool_ids": ["check-one"]})
         state = replace(state, results=MappingProxyType(dict(state.results) | {
             "draft-one": candidate, "audit-one": review}))
@@ -69,9 +73,11 @@ class ResearchReportingTests(unittest.TestCase):
         candidate = copy.deepcopy(state.results["draft-one"])
         candidate["question_status"] = "open_in_sources"
         candidate["claims"][0].update({"kind": "source_assertion", "citations": [{"source_id": "source-one",
-            "start": 0, "end": len(source["text"]), "quote": source["text"]}]})
+            "start": 0, "end": len(source["text"]), "quote": source["text"]}], "basis": "external_fact",
+            "basis_reference": "The supplied note"})
         review = copy.deepcopy(state.results["audit-one"])
         review["checks"][0].update({"verdict": "supported", "reasoning": "The cited passage states that the problem remains open."})
+        review["checks"][0].update({"basis_verdict": "source_attributed", "basis_reasoning": "Exact captured source attribution."})
         results = dict(state.results) | {"draft-one": candidate, "audit-one": review}
         draft_packet = {"sources": sources, "tool_results": {"check-one": tool_receipt()}}
         intent_packets = dict(state.intent_packets)
@@ -85,8 +91,10 @@ class ResearchReportingTests(unittest.TestCase):
     def test_unreviewed_recollection_and_refutation_are_qualified(self) -> None:
         state = snapshot(); candidate = copy.deepcopy(state.results["draft-one"])
         candidate["claims"][0]["kind"] = "model_knowledge"
+        candidate["claims"][0].update({"basis": "unsupported_recollection", "basis_reference": "Recalled theorem"})
         review = copy.deepcopy(state.results["audit-one"])
         review["checks"][0]["verdict"] = "supported"
+        review["checks"][0].update({"basis_verdict": "unsupported", "basis_reasoning": "No supplied support."})
         review["challenges"][0]["outcome"] = "survives"
         results = dict(state.results) | {"draft-one": candidate, "audit-one": review}
         report = render_report(replace(state, results=MappingProxyType(results)))

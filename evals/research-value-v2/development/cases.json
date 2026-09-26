@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "purpose": "Development cases for bounded research value evaluation; grader truth is stored separately.",
+  "cases": [
+    {
+      "id": "dev-subset-sum-9",
+      "question": "How many subsets of {1,2,3,4,5,6,7,8} have sum 9? Give one such subset and explain why the count is exhaustive.",
+      "objective": "investigate",
+      "mode": "deep",
+      "sources": [],
+      "expected_obligations": ["Give the exact number of subsets.", "Give one subset with sum 9.", "Explain why the enumeration covers every subset exactly once."],
+      "forbidden_claims": ["Claiming exhaustiveness from examples alone."],
+      "checks": [],
+      "capabilities": {"fetch_sources": false, "math_checks": false},
+      "evidence_policy": "autonomous"
+    },
+    {
+      "id": "dev-rational-domain-2",
+      "question": "For real x where the expression is defined, simplify (x^2 - 4)/(x - 2). State its domain and whether the simplified expression is equivalent at every real number.",
+      "objective": "prove",
+      "mode": "deep",
+      "sources": [],
+      "expected_obligations": ["Give the simplified expression.", "State the original domain.", "Explain the excluded input and distinguish equality on the domain from equality of domains."],
+      "forbidden_claims": ["Claiming equivalence at x=2."],
+      "checks": [],
+      "capabilities": {"fetch_sources": false, "math_checks": true},
+      "evidence_policy": "autonomous"
+    },
+    {
+      "id": "dev-euler-boundary-40",
+      "question": "Is n^2+n+41 prime for every nonnegative integer n? Determine the truth of the statement and support your conclusion.",
+      "objective": "investigate",
+      "mode": "deep",
+      "sources": [],
+      "expected_obligations": ["Give a correct truth value.", "If false, provide and verify a counterexample.", "Keep any finite testing claim within the range actually checked."],
+      "forbidden_claims": ["Claiming finite checks prove a universal statement."],
+      "checks": [],
+      "capabilities": {"fetch_sources": false, "math_checks": false},
+      "evidence_policy": "autonomous"
+    },
+    {
+      "id": "dev-schedule-amendment",
+      "question": "What meeting time is supported by these records? Distinguish the original schedule from the current instruction and explain the basis.",
+      "objective": "investigate",
+      "mode": "deep",
+      "sources": [
+        {"id": "schedule-original", "kind": "synthetic_record", "text": "Draft schedule v1, created Monday: project review, Thursday at 09:30 local time."},
+        {"id": "schedule-amendment", "kind": "synthetic_record", "text": "Signed amendment v2, created Tuesday by the organizer: project review moved to Thursday at 10:00 local time. This amendment replaces the time in v1."}
+      ],
+      "expected_obligations": ["Report the current meeting time.", "Identify the earlier time as superseded.", "Attribute the current time to the signed amendment."],
+      "forbidden_claims": ["Treating both records as equally current.", "Inventing a time zone."],
+      "checks": [],
+      "capabilities": {"fetch_sources": false, "math_checks": false},
+      "evidence_policy": "receipt_assisted"
+    },
+    {
+      "id": "dev-flawed-proof-sqrt2",
+      "question": "A proof claims that sqrt(2) is rational: write sqrt(2)=a/b in lowest terms, square to get a^2=2b^2, and conclude that a and b are both even. Is the proof valid? Assess the conclusion and justify your answer.",
+      "objective": "prove",
+      "mode": "deep",
+      "sources": [],
+      "expected_obligations": ["Give a correct conclusion about the proof and claim.", "Explain what follows from a^2=2b^2.", "Identify the contradiction with lowest terms."],
+      "forbidden_claims": ["Accepting the claim that sqrt(2) is rational.", "Claiming both-even contradicts lowest terms without explaining why."],
+      "checks": [],
+      "capabilities": {"fetch_sources": false, "math_checks": false},
+      "evidence_policy": "autonomous"
+    },
+    {
+      "id": "dev-shipment-records",
+      "question": "How many usable units remain, and how many were originally shipped? Show how the records combine and state any limitation.",
+      "objective": "investigate",
+      "mode": "deep",
+      "sources": [
+        {"id": "shipment-count", "kind": "synthetic_record", "text": "Dispatch record: 12 cartons were shipped."},
+        {"id": "units-per-carton", "kind": "synthetic_record", "text": "Packing specification for this shipment: each carton contains 8 units."},
+        {"id": "damage-record", "kind": "synthetic_record", "text": "Receiving record: 3 units were damaged in transit and are not usable."}
+      ],
+      "expected_obligations": ["Compute original shipped units.", "Compute usable units.", "Show the arithmetic and identify the records used."],
+      "forbidden_claims": ["Treating damaged units as usable.", "Inferring facts outside the supplied records."],
+      "checks": [],
+      "capabilities": {"fetch_sources": false, "math_checks": false},
+      "evidence_policy": "receipt_assisted"
+    },
+    {
+      "id": "dev-quick-odd-sum",
+      "question": "Prove that for every positive integer n, 1 + 3 + 5 + ... + (2n - 1) = n^2. Give a concise proof.",
+      "objective": "prove",
+      "mode": "quick",
+      "sources": [],
+      "expected_obligations": ["State the identity for all positive integers n.", "Give a valid proof, such as induction or a direct pairing argument."],
+      "forbidden_claims": ["Checking only finitely many values as proof of the universal identity."],
+      "checks": [],
+      "capabilities": {"fetch_sources": false, "math_checks": false},
+      "evidence_policy": "autonomous"
+    }
+  ]
+}

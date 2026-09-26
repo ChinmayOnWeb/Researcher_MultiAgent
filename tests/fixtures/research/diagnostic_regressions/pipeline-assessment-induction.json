@@ -1,0 +1,36 @@
+{
+  "case_id": "induction-weighted-sum",
+  "final_assessment": {
+    "answer_status": "inconclusive",
+    "claim_findings": [
+      {
+        "claim_id": "predicate-definition",
+        "reasons": [],
+        "status": "model_reviewed_derivation"
+      },
+      {
+        "claim_id": "induction-principle",
+        "reasons": [],
+        "status": "unverified"
+      },
+      {
+        "claim_id": "identity-proved",
+        "reasons": [
+          "dependency_induction-principle_unverified"
+        ],
+        "status": "unverified"
+      }
+    ],
+    "computation_status": "not_performed",
+    "formal_status": "not_performed",
+    "provenance_status": "valid",
+    "semantic_status": "issues_found",
+    "unresolved": []
+  },
+  "fixture_kind": "captured_assessment_observation",
+  "source_report_sha256": "599867ba0e27356aef541a05e184785054ae30e2c2bc1f06b19b44f865240b59",
+  "source_run": "runs/ten-styles-live-approved-20260923/trials/induction-weighted-sum-01-pipeline/run",
+  "source_state_sha256": "af5100eee553a134b9b16b07cb2d16e2032501f0e790e621b5df075702464ab0",
+  "synthetic": false,
+  "terminal_status": "complete"
+}

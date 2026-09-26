@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 import json
 from typing import Any, Mapping
@@ -50,7 +51,13 @@ def _draft(snapshot: ResearchSnapshot) -> tuple[str | None, Mapping[str, Any] | 
 
 def _assessment(snapshot: ResearchSnapshot, draft: Mapping[str, Any] | None,
                 draft_id: str | None) -> Mapping[str, Any]:
-    if isinstance(snapshot.final_assessment, Mapping): return snapshot.final_assessment
+    if isinstance(snapshot.final_assessment, Mapping):
+        final = snapshot.final_assessment
+        if (draft_id is None or final.get("draft_id") == draft_id) and (
+                final.get("draft_hash") is None or draft is None or
+                final.get("draft_hash") == hashlib.sha256(
+                    json.dumps(draft, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()):
+            return final
     if draft is None:
         performed = any(receipt.get("status") == "succeeded" and
                         receipt.get("request", {}).get("operation") != "fetch_source"
@@ -178,7 +185,14 @@ def render_report(snapshot: ResearchSnapshot) -> str:
     observed_efforts = {item.get("effort_observed") for item in snapshot.action_telemetry.values() if item.get("effort_observed")}
     lines.append("- Observed models: " + (", ".join(_inline(value) for value in sorted(observed_models)) if observed_models else "unknown"))
     lines.append("- Observed reasoning effort: " + (", ".join(_inline(value) for value in sorted(observed_efforts)) if observed_efforts else "unknown"))
-    lines.extend([f"- Model calls: {snapshot.model_calls_used}", f"- Tool calls: {snapshot.tool_calls_used}"])
+    attempt_intents = len(snapshot.attempts) + (1 if snapshot.pending_attempt_id else 0)
+    historical_calls = max(0, snapshot.model_calls_used - attempt_intents)
+    lines.extend([f"- Provider attempt intents: {attempt_intents}",
+                  f"- Model calls: {snapshot.model_calls_used}",
+                  f"- Historical v3 action-based call count: {historical_calls}",
+                  f"- Tool calls: {snapshot.tool_calls_used}"])
+    lines.append(f"- Observed local session ID markers: {sum(item.get('session_id_marker_count', 0) for item in snapshot.attempts.values())}")
+    lines.append("- Session ID markers are supplemental local telemetry, not billing totals.")
     elapsed_ms = sum(item.get("duration_ms", 0) for item in snapshot.action_telemetry.values())
     if snapshot.finished_at:
         try:
@@ -220,6 +234,18 @@ def render_log(snapshot: ResearchSnapshot) -> str:
                           f"Outcome: {_inline(outcome.get('outcome', 'not recorded'))}",
                           f"Elapsed milliseconds: {telemetry.get('duration_ms', 'unknown')}"])
             if outcome.get("error"): lines.append(f"Error: {_quoted(outcome['error'])}")
+            action_attempts = [item for item in snapshot.attempts.values()
+                               if item.get("action_id") == action_id]
+            for attempt in action_attempts:
+                retry = (f", retry of {_inline(attempt['parent_attempt_id'])}"
+                         if attempt.get("parent_attempt_id") else "")
+                lines.append(f"Provider attempt: {_inline(attempt['attempt_id'])} "
+                             f"({_inline(attempt['attempt_kind'])}{retry})")
+                lines.append(f"Attempt outcome: {_inline(attempt['outcome'])}; "
+                             f"input bytes: {attempt['telemetry']['input_bytes']}; "
+                             f"duration: {attempt['telemetry']['duration_ms']} ms; "
+                             f"failure class: {_inline(attempt.get('failure_class') or 'none')}; "
+                             f"session ID markers: {attempt.get('session_id_marker_count', 0)}")
         lines.append("")
     lines.extend([f"Terminal status: {_inline(snapshot.status)}", f"Reason: {_inline(snapshot.reason or 'none')}", ""])
     return "\n".join(lines)

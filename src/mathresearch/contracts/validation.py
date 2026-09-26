@@ -14,10 +14,11 @@ CAPABILITY_NAME_PATTERN = re.compile(r"[a-z][a-z0-9_]{1,63}\Z")
 class ValidationError(ValueError):
     """Identifies an invalid input field without accepting partial data."""
 
-    def __init__(self, field: str, message: str) -> None:
+    def __init__(self, field: str, message: str, *, details: Mapping[str, Any] | None = None) -> None:
         super().__init__(f"{field}: {message}")
         self.field = field
         self.message = message
+        self.details = dict(details or {})
 
 
 def require_object(value: Any, field: str) -> Mapping[str, Any]:

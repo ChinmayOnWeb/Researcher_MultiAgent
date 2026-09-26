@@ -28,6 +28,30 @@ class ResearchBrokerTests(unittest.TestCase):
             self.assertEqual(receipt["result"]["proper_divisors"], [1, 2, 3])
             self.assertEqual(receipt["implementation_version"], "mathresearch-broker-v1")
 
+    def test_actual_trusted_child_returns_recomputed_polynomial_receipt(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp:
+            scratch = Path(temp)
+            env = dict(os.environ, PYTHONPATH=str(Path("src").resolve()))
+            request = {"id": "polynomial-check", "operation": "check_polynomial",
+                       "arguments": {"lhs": [2, 3, 1], "rhs": [2, 3, 1], "lo": 0, "hi": 20}}
+            with patch.dict(os.environ, env, clear=True):
+                receipt = run_broker(tool_id="a0001", request=request,
+                    capabilities={"fetch_sources": False, "math_checks": True}, descriptors={},
+                    authorized_urls=None, scope="polynomial identity", scratch=scratch)
+            self.assertEqual(receipt["status"], "succeeded")
+            self.assertTrue(receipt["result"]["coefficient_equal"])
+            self.assertEqual(receipt["result"]["bounded_checked_count"], 0)
+
+    def test_forged_polynomial_receipt_is_rejected_by_deterministic_recomputation(self) -> None:
+        request = {"id": "polynomial-check", "operation": "check_polynomial",
+                   "arguments": {"lhs": [2, 3, 1], "rhs": [2, 3, 1], "lo": 0, "hi": 20}}
+        forged = {"tool_id": "a0001", "request": request, "status": "succeeded",
+                  "result": {"coefficient_equal": False, "counterexample": 1,
+                             "bounded_checked_count": 21}, "error": None,
+                  "scope": "polynomial identity", "implementation_version": "mathresearch-broker-v1"}
+        with self.assertRaises(ValidationError):
+            validate_tool_receipt(forged, tool_id="a0001", request=request)
+
     def test_denied_capability_and_invalid_input_do_not_launch_child(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp:
             with patch("mathresearch.research.broker.execute_worker") as execute:

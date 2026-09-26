@@ -1,0 +1,16 @@
+{
+  "artifact_sha256": "3b9bad5ed836a3bb3c7db58d4d242db784000945abd536c7fe9070a9db6d1a2c",
+  "case_id": "induction-weighted-sum",
+  "exit_code": 0,
+  "failure_class": "schema_rejection",
+  "fixture_kind": "captured_provider_payload",
+  "outcome": "succeeded",
+  "protocol_validity": "invalid",
+  "response_file": "response.json",
+  "source_file": "runs/ten-styles-live-approved-20260923/trials/induction-weighted-sum-01-baseline/provider-result.json",
+  "source_run": "runs/ten-styles-live-approved-20260923",
+  "source_trial": "runs/ten-styles-live-approved-20260923/trials/induction-weighted-sum-01-baseline",
+  "synthetic": false,
+  "validation_error": "claims[0].depends_on[0]: unknown claims reference 'base-case'",
+  "validation_details": {"json_path": "claims[0].depends_on[0]", "bad_reference": "base-case", "expected_namespace": "claims", "available_ids": ["identity", "induction-hypothesis"]}
+}

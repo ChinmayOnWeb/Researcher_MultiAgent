@@ -1,0 +1,16 @@
+{
+  "artifact_sha256": "a9ac35707261233923bce085b5b7f4121f2560b7c84fbd9a323dd6649ecb1d56",
+  "case_id": "calculus-log-integral",
+  "exit_code": 0,
+  "failure_class": "schema_rejection",
+  "fixture_kind": "captured_provider_payload",
+  "outcome": "succeeded",
+  "protocol_validity": "invalid",
+  "response_file": "response.json",
+  "source_file": "runs/ten-styles-live-approved-20260923-calculus-log-integral/trials/calculus-log-integral-01-baseline/provider-result.json",
+  "source_run": "runs/ten-styles-live-approved-20260923-calculus-log-integral",
+  "source_trial": "runs/ten-styles-live-approved-20260923-calculus-log-integral/trials/calculus-log-integral-01-baseline",
+  "synthetic": false,
+  "validation_error": "claims[0].depends_on[0]: unknown claims reference 'ibp-epsilon'",
+  "validation_details": {"json_path": "claims[0].depends_on[0]", "bad_reference": "ibp-epsilon", "expected_namespace": "claims", "available_ids": ["boundary-vanishes", "integral-value"]}
+}

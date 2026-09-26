@@ -218,17 +218,20 @@ class ResearchCliIntegrationTests(unittest.TestCase):
 
     def test_evaluation_can_prepare_a_bounded_smoke_case_set(self) -> None:
         output = self.root / "smoke-evaluation"
-        result = self._run("evaluate", "--cases", str(PROJECT_ROOT / "evals" / "research-quality"),
+        result = self._run("evaluate", "--cases", str(PROJECT_ROOT / "evals" / "research-value-v2" / "development"),
             "--out-dir", str(output), "--model", "gpt-test", "--effort", "high",
-            "--case-id", "odd-sum", "--case-id", "bounded-search", "--case-id", "perfect-six",
+            "--case-id", "dev-subset-sum-9", "--case-id", "dev-rational-domain-2",
+            "--case-id", "dev-euler-boundary-40",
             "--replicates", "1", "--json")
         self.assertEqual(result.returncode, 0, result.stderr)
         manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(manifest["case_ids"], ["odd-sum", "perfect-six", "bounded-search"])
+        self.assertEqual(manifest["case_ids"], ["dev-subset-sum-9", "dev-rational-domain-2",
+            "dev-euler-boundary-40", "dev-schedule-amendment", "dev-flawed-proof-sqrt2",
+            "dev-shipment-records"])
         self.assertEqual(manifest["replicates"], 1)
-        self.assertEqual(len(manifest["ordering"]), 3)
+        self.assertEqual(len(manifest["ordering"]), 6)
         comparison = json.loads((output / "comparison.json").read_text(encoding="utf-8"))
-        self.assertEqual(len(comparison["missing_trials"]), 6)
+        self.assertEqual(len(comparison["missing_trials"]), 12)
         self.assertTrue(all(item[1] == 1 for item in comparison["missing_trials"]))
 
     def test_evaluation_rejects_unknown_smoke_case_without_creating_output(self) -> None:

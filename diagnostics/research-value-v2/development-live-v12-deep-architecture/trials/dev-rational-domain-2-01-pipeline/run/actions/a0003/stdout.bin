@@ -1,0 +1,1 @@
+{"error":"provider exited unsuccessfully","implementation_version":"mathresearch-broker-v1","request":{"arguments":{"hi":2,"lhs":[-4,0,1],"lo":0,"rhs":[-4,0,1]},"id":"chk-factor","operation":"check_polynomial"},"result":null,"scope":"Coordinator-authorized check_polynomial operation with exact validated arguments.","status":"failed","tool_id":"a0003"}

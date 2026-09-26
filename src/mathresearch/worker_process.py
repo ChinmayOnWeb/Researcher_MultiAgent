@@ -8,6 +8,7 @@ from pathlib import Path
 import stat
 import subprocess
 import threading
+import time
 from typing import Any, Mapping
 
 from .adapters.base import Adapter, LaunchSpec, WorkerInput, WorkerOutput
@@ -46,6 +47,7 @@ def execute_worker(adapter: Adapter, task: WorkerInput, *, scratch: Path, timeou
     stdout_reader.start(); stderr_reader.start()
     stdin_writer = _StdinWriter(process.stdin, spec.stdin)
     stdin_writer.start()
+    deadline = time.monotonic() + timeout_seconds
     try:
         exit_code = process.wait(timeout=timeout_seconds)
     except KeyboardInterrupt:
@@ -53,31 +55,62 @@ def execute_worker(adapter: Adapter, task: WorkerInput, *, scratch: Path, timeou
         _close_stdin(process)
         stdin_writer.join(timeout=1)
         stdout_reader.join(timeout=2); stderr_reader.join(timeout=2)
+        if stdout_reader.is_alive() or stderr_reader.is_alive():
+            _close_streams(process)
+            stdout_reader.join(timeout=1); stderr_reader.join(timeout=1)
         if teardown_ok:
             _close_streams(process)
         else:
+            if job is not None:
+                job.close()
             raise RuntimeError("provider interruption cleanup could not be confirmed")
+        if job is not None:
+            job.close()
         raise
     except subprocess.TimeoutExpired:
         teardown_ok = _terminate_tree(process, job)
         _close_stdin(process)
         stdin_writer.join(timeout=1)
-        stdout_reader.join(); stderr_reader.join()
+        stdout_reader.join(timeout=2); stderr_reader.join(timeout=2)
         _close_streams(process)
-        if not teardown_ok:
+        stdout_reader.join(timeout=1); stderr_reader.join(timeout=1)
+        if job is not None:
+            job.close()
+        if not teardown_ok or stdout_reader.is_alive() or stderr_reader.is_alive():
             return WorkerOutput("cancelled", None, stdout_reader.data, stderr_reader.data, None, "provider timeout cleanup could not be confirmed")
         return WorkerOutput("timed_out", None, stdout_reader.data, stderr_reader.data, None, "provider timed out")
     except OSError as exc:
         _terminate_tree(process, job)
-        stdout_reader.join(); stderr_reader.join()
+        stdout_reader.join(timeout=2); stderr_reader.join(timeout=2)
         _close_streams(process)
-        return WorkerOutput("launch_failed", None, stdout_reader.data, stderr_reader.data, None, f"provider I/O failed: {exc}")
-    finally:
+        stdout_reader.join(timeout=1); stderr_reader.join(timeout=1)
         if job is not None:
             job.close()
-    stdout_reader.join(); stderr_reader.join()
+        return WorkerOutput("launch_failed", None, stdout_reader.data, stderr_reader.data, None, f"provider I/O failed: {exc}")
+    # A provider CLI can exit while a child process still owns an inherited
+    # stdout or stderr handle. Bound stream draining by the same deadline as
+    # process execution so descendants cannot silently bypass the call timeout.
+    remaining = max(0.0, deadline - time.monotonic())
+    stdout_reader.join(timeout=remaining)
+    remaining = max(0.0, deadline - time.monotonic())
+    stderr_reader.join(timeout=remaining)
+    if (time.monotonic() >= deadline or stdout_reader.is_alive() or stderr_reader.is_alive()):
+        teardown_ok = _terminate_tree(process, job)
+        _close_stdin(process)
+        _close_streams(process)
+        stdin_writer.join(timeout=1)
+        stdout_reader.join(timeout=1); stderr_reader.join(timeout=1)
+        if job is not None:
+            job.close()
+        if not teardown_ok or stdout_reader.is_alive() or stderr_reader.is_alive():
+            return WorkerOutput("cancelled", exit_code, stdout_reader.data, stderr_reader.data, None,
+                                "provider timeout cleanup could not be confirmed")
+        return WorkerOutput("timed_out", exit_code, stdout_reader.data, stderr_reader.data, None,
+                            "provider timed out while draining output")
     stdin_writer.join(timeout=1)
     _close_streams(process)
+    if job is not None:
+        job.close()
     if stdin_writer.error is not None and exit_code == 0:
         return WorkerOutput("failed", exit_code, stdout_reader.data, stderr_reader.data, None, f"provider I/O failed: {stdin_writer.error}")
     if exit_code != 0:

@@ -1,0 +1,606 @@
+[
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-2b8f328da1302a9a4cb1",
+    "case_id": "dev-rational-domain-2",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 2,
+      "coverage": 2,
+      "challenge": 2,
+      "provenance": 2,
+      "uncertainty": 2
+    },
+    "dimension_reasons": {
+      "correctness": "Correct restricted cancellation and domain comparison.",
+      "coverage": "Answers both simplification and global-equivalence questions.",
+      "challenge": "Tests cancellation and the excluded value.",
+      "provenance": "Self-contained algebra.",
+      "uncertainty": "Limits equality to x≠2."
+    },
+    "critical_failures": [],
+    "evidence": [
+      "Factors before cancellation and compares both expressions at x=2."
+    ],
+    "evidence_refs": [
+      "claim:not-global-equivalence",
+      "step:domain-check",
+      "step:factor-cancel",
+      "step:comparison-at-two"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  },
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-30e2404df561beff666f",
+    "case_id": "dev-shipment-records",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 2,
+      "coverage": 2,
+      "challenge": 2,
+      "provenance": 2,
+      "uncertainty": 2
+    },
+    "dimension_reasons": {
+      "correctness": "Conditional arithmetic is correct.",
+      "coverage": "Gives both requested quantities and their limits.",
+      "challenge": "Tests the missing cross-record linkage.",
+      "provenance": "Quotes each supplied record.",
+      "uncertainty": "Does not claim unlinked records establish one shipment."
+    },
+    "critical_failures": [],
+    "evidence": [
+      "Computes 12×8=96 and 96−3=93 only under an explicit linkage assumption."
+    ],
+    "evidence_refs": [
+      "claim:record-linkage-assumption",
+      "claim:original-units-conditional",
+      "claim:usable-units-conditional",
+      "step:linkage-limit-step"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  },
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-318ab29440f968ccf33a",
+    "case_id": "dev-euler-boundary-40",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 2,
+      "coverage": 2,
+      "challenge": 2,
+      "provenance": 2,
+      "uncertainty": 2
+    },
+    "dimension_reasons": {
+      "correctness": "40 gives the correct composite value 41².",
+      "coverage": "Refutes the universal claim with an in-domain value.",
+      "challenge": "Checks arithmetic, factorization, and quantifier.",
+      "provenance": "Self-contained calculation.",
+      "uncertainty": "Makes only the justified refutation."
+    },
+    "critical_failures": [],
+    "evidence": [
+      "40²+40+41=1681=41², and 40 is nonnegative."
+    ],
+    "evidence_refs": [
+      "claim:universal-statement-false",
+      "step:step-evaluate",
+      "step:step-composite",
+      "step:step-refute"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  },
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-31bd69bbe1ace8db4a1c",
+    "case_id": "dev-subset-sum-9",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 2,
+      "coverage": 2,
+      "challenge": 2,
+      "provenance": 2,
+      "uncertainty": 2
+    },
+    "dimension_reasons": {
+      "correctness": "The seven listed subsets and count are correct.",
+      "coverage": "Excludes all other cardinalities and exhausts pairs and triples.",
+      "challenge": "Checks omitted cardinalities and disjoint cases.",
+      "provenance": "Self-contained enumeration.",
+      "uncertainty": "Exhaustiveness is supported by stated bounds."
+    },
+    "critical_failures": [],
+    "evidence": [
+      "Cardinality bounds leave only pairs and triples, which are exhaustively enumerated."
+    ],
+    "evidence_refs": [
+      "claim:count-seven",
+      "step:exclude-small",
+      "step:exclude-large",
+      "step:enumerate-pairs",
+      "step:enumerate-triples"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  },
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-36cc6c42608a123e828b",
+    "case_id": "dev-subset-sum-9",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 2,
+      "coverage": 2,
+      "challenge": 2,
+      "provenance": 2,
+      "uncertainty": 2
+    },
+    "dimension_reasons": {
+      "correctness": "Correct seven-subset enumeration.",
+      "coverage": "All viable cardinalities are covered exactly once.",
+      "challenge": "Tests empty, singleton, size-four, pair, and triple cases.",
+      "provenance": "Self-contained proof.",
+      "uncertainty": "States an exhaustive conclusion with support."
+    },
+    "critical_failures": [],
+    "evidence": [
+      "The lower bound excludes four elements; pair and triple case splits are complete."
+    ],
+    "evidence_refs": [
+      "claim:total-seven",
+      "step:cardinality-bound",
+      "step:pair-case",
+      "step:triple-case",
+      "step:total-count"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  },
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-3f7d31924b69661952fa",
+    "case_id": "dev-shipment-records",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 1,
+      "coverage": 1,
+      "challenge": 1,
+      "provenance": 2,
+      "uncertainty": 1
+    },
+    "dimension_reasons": {
+      "correctness": "Arithmetic is right, but 96 is asserted without linking the packing record to the dispatch.",
+      "coverage": "Handles damage linkage but leaves the packing-to-dispatch linkage unsupported.",
+      "challenge": "Tests only the damage-record limitation.",
+      "provenance": "Accurately cites the three records.",
+      "uncertainty": "States one limitation but overstates the original-shipment total."
+    },
+    "critical_failures": [
+      "Treats the packing rate as applying to the 12-carton dispatch without record evidence."
+    ],
+    "evidence": [
+      "The answer presents 12×8=96 as established, although it conditions only the damage subtraction."
+    ],
+    "evidence_refs": [
+      "claim:original-units",
+      "claim:subtraction-condition",
+      "step:compute-original-units",
+      "step:compute-usable-units"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  },
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-5ea15e8f8e7d000af311",
+    "case_id": "dev-flawed-proof-sqrt2",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 2,
+      "coverage": 2,
+      "challenge": 2,
+      "provenance": 2,
+      "uncertainty": 2
+    },
+    "dimension_reasons": {
+      "correctness": "Correct least-denominator contradiction proof.",
+      "coverage": "Explains the failed rationality conclusion and the missing reduction.",
+      "challenge": "Checks parity, nonzero denominator, and smaller denominator.",
+      "provenance": "Self-contained argument.",
+      "uncertainty": "States the corrected irrationality conclusion."
+    },
+    "critical_failures": [],
+    "evidence": [
+      "A minimal positive denominator yields an even numerator and denominator, hence a smaller one."
+    ],
+    "evidence_refs": [
+      "claim:claim-irrational",
+      "step:step-minimal-denominator",
+      "step:step-a-even",
+      "step:step-b-even",
+      "step:step-contradiction"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  },
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-64bf252a9f0e09769371",
+    "case_id": "dev-subset-sum-9",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 2,
+      "coverage": 2,
+      "challenge": 2,
+      "provenance": 2,
+      "uncertainty": 2
+    },
+    "dimension_reasons": {
+      "correctness": "The count and all listed subsets are correct.",
+      "coverage": "Cardinality bounds and increasing tuples establish exhaustiveness.",
+      "challenge": "Tests the minimum four-element sum and tuple bounds.",
+      "provenance": "Self-contained enumeration.",
+      "uncertainty": "Conclusion follows from the complete partition."
+    },
+    "critical_failures": [],
+    "evidence": [
+      "Only sizes two and three remain; they contribute four and three solutions."
+    ],
+    "evidence_refs": [
+      "claim:seven-subsets",
+      "step:size-bounds",
+      "step:pairs",
+      "step:triples",
+      "step:total"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  },
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-6a997108d1bd03700d43",
+    "case_id": "dev-rational-domain-2",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 2,
+      "coverage": 2,
+      "challenge": 2,
+      "provenance": 2,
+      "uncertainty": 2
+    },
+    "dimension_reasons": {
+      "correctness": "Correct factorization, restricted cancellation, and domain conclusion.",
+      "coverage": "Addresses agreement domain and non-equivalence.",
+      "challenge": "Checks the excluded denominator value.",
+      "provenance": "Self-contained algebra.",
+      "uncertainty": "Does not extend equality to x=2."
+    },
+    "critical_failures": [],
+    "evidence": [
+      "The quotient agrees with x+2 only on ℝ\\{2}; x=2 remains excluded."
+    ],
+    "evidence_refs": [
+      "claim:restricted-simplification",
+      "claim:not-global-equivalence",
+      "step:restricted-cancellation",
+      "step:compare-at-two"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  },
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-71179ac419eb65c2136e",
+    "case_id": "dev-rational-domain-2",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 2,
+      "coverage": 2,
+      "challenge": 2,
+      "provenance": 2,
+      "uncertainty": 2
+    },
+    "dimension_reasons": {
+      "correctness": "Correct cancellation restricted to x≠2.",
+      "coverage": "Explains both domain and non-equivalence.",
+      "challenge": "Uses x=2 to test the central domain risk.",
+      "provenance": "Self-contained algebra.",
+      "uncertainty": "States exact agreement domain."
+    },
+    "critical_failures": [],
+    "evidence": [
+      "At x=2 the polynomial is defined but the original quotient is not."
+    ],
+    "evidence_refs": [
+      "claim:domain-claim",
+      "claim:non-equivalence-claim",
+      "step:simplify-step",
+      "step:non-equivalence-step"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  },
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-893a92c251c0cf0575b3",
+    "case_id": "dev-flawed-proof-sqrt2",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 2,
+      "coverage": 2,
+      "challenge": 2,
+      "provenance": 2,
+      "uncertainty": 2
+    },
+    "dimension_reasons": {
+      "correctness": "Correctly repairs the missing divisibility justification and reverses the conclusion.",
+      "coverage": "Explains the equation, parity inference, and lowest-terms contradiction.",
+      "challenge": "Tests whether evenness supports or refutes the representation.",
+      "provenance": "States the needed lemma and its application.",
+      "uncertainty": "Limits the result to the standard lowest-terms interpretation."
+    },
+    "critical_failures": [],
+    "evidence": [
+      "2 divides a² and b², giving a and b even and contradicting lowest terms."
+    ],
+    "evidence_refs": [
+      "claim:prime-square-lemma",
+      "claim:lowest-terms-contradiction",
+      "step:step-a-even",
+      "step:step-b-even",
+      "step:step-discharge"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  },
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-9add748a96ecb0015cca",
+    "case_id": "dev-shipment-records",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 2,
+      "coverage": 2,
+      "challenge": 2,
+      "provenance": 2,
+      "uncertainty": 2
+    },
+    "dimension_reasons": {
+      "correctness": "Conditional multiplication and subtraction are correct.",
+      "coverage": "Provides both quantities and the missing linkage.",
+      "challenge": "Tests whether all records describe one shipment.",
+      "provenance": "Cites every record used.",
+      "uncertainty": "Clearly labels the linkage as an added assumption."
+    },
+    "critical_failures": [],
+    "evidence": [
+      "96 and 93 are expressly conditional on a same-shipment assumption."
+    ],
+    "evidence_refs": [
+      "claim:same-shipment",
+      "claim:original-units",
+      "claim:usable-units",
+      "step:compute-original",
+      "step:compute-usable"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  },
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-9e7285121b004af79927",
+    "case_id": "dev-euler-boundary-40",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 2,
+      "coverage": 2,
+      "challenge": 2,
+      "provenance": 2,
+      "uncertainty": 2
+    },
+    "dimension_reasons": {
+      "correctness": "Correct in-domain composite counterexample.",
+      "coverage": "Refutes the universal statement.",
+      "challenge": "Verifies value, nontrivial factor, and quantifier.",
+      "provenance": "Self-contained arithmetic.",
+      "uncertainty": "No broader unsupported claim."
+    },
+    "critical_failures": [],
+    "evidence": [
+      "n=40 produces 1681=41·41, a composite value."
+    ],
+    "evidence_refs": [
+      "claim:universal-statement-false",
+      "step:evaluate-forty",
+      "step:factor-forty",
+      "step:refute-universal"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  },
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-b6d5a9bbeb188aeb8070",
+    "case_id": "dev-schedule-amendment",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 2,
+      "coverage": 2,
+      "challenge": 2,
+      "provenance": 2,
+      "uncertainty": 2
+    },
+    "dimension_reasons": {
+      "correctness": "Correctly applies v2's explicit replacement.",
+      "coverage": "States original and current record-supported times.",
+      "challenge": "Tests chronology, source wording, and later-change risk.",
+      "provenance": "Uses exact source passages.",
+      "uncertainty": "Limits currentness to supplied records."
+    },
+    "critical_failures": [],
+    "evidence": [
+      "The v2 record says 10:00 and expressly replaces v1's time."
+    ],
+    "evidence_refs": [
+      "claim:replacement-statement",
+      "claim:current-supported-time",
+      "step:read-amendment",
+      "step:apply-replacement"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  },
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-bc3808d5479cd5ce4af6",
+    "case_id": "dev-flawed-proof-sqrt2",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 2,
+      "coverage": 2,
+      "challenge": 2,
+      "provenance": 2,
+      "uncertainty": 2
+    },
+    "dimension_reasons": {
+      "correctness": "Correct parity contradiction proof.",
+      "coverage": "Explains the equation, both evenness results, and lowest-terms conflict.",
+      "challenge": "Tests the central parity inference.",
+      "provenance": "Supplies the odd-square argument.",
+      "uncertainty": "Correctly rejects rationality conclusion."
+    },
+    "critical_failures": [],
+    "evidence": [
+      "a²=2b² forces both a and b even, contradicting lowest terms."
+    ],
+    "evidence_refs": [
+      "claim:sqrt2-irrational",
+      "step:a-even",
+      "step:b-even",
+      "step:lowest-terms-contradiction",
+      "step:conclude-irrational"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  },
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-cb24bb51556696b981e8",
+    "case_id": "dev-schedule-amendment",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 2,
+      "coverage": 2,
+      "challenge": 2,
+      "provenance": 2,
+      "uncertainty": 2
+    },
+    "dimension_reasons": {
+      "correctness": "Correctly treats v2 as superseding v1.",
+      "coverage": "States both original and current supported times.",
+      "challenge": "Tests potential record conflict against explicit replacement text.",
+      "provenance": "Uses exact cited passages.",
+      "uncertainty": "Conclusion is confined to the records."
+    },
+    "critical_failures": [],
+    "evidence": [
+      "The amendment states both 10:00 and that it replaces v1."
+    ],
+    "evidence_refs": [
+      "claim:amended-time",
+      "claim:current-time",
+      "step:identify-amendment",
+      "step:apply-replacement"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  },
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-e5371f3a6c408337f46f",
+    "case_id": "dev-euler-boundary-40",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 2,
+      "coverage": 2,
+      "challenge": 2,
+      "provenance": 2,
+      "uncertainty": 2
+    },
+    "dimension_reasons": {
+      "correctness": "Correct counterexample and factorization.",
+      "coverage": "Covers domain and universal quantifier.",
+      "challenge": "Directly tests the boundary counterexample.",
+      "provenance": "Self-contained arithmetic.",
+      "uncertainty": "Only refutes the stated universal claim."
+    },
+    "critical_failures": [],
+    "evidence": [
+      "40 is in-domain and gives 1681=41·41."
+    ],
+    "evidence_refs": [
+      "claim:statement-false",
+      "step:step-domain",
+      "step:step-evaluate",
+      "step:step-factor",
+      "step:step-refute"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  },
+  {
+    "grader_name": "Astra (independent advisory grader)",
+    "packet_id": "grade-fad735cdfc13a62d5588",
+    "case_id": "dev-schedule-amendment",
+    "replicate": 1,
+    "assessability": "assessable",
+    "dimensions": {
+      "correctness": 2,
+      "coverage": 2,
+      "challenge": 2,
+      "provenance": 2,
+      "uncertainty": 2
+    },
+    "dimension_reasons": {
+      "correctness": "Correctly applies the signed v2 replacement.",
+      "coverage": "Reports v1 original and v2 current time.",
+      "challenge": "Uses explicit replacement language to resolve the conflict.",
+      "provenance": "Cites both records.",
+      "uncertainty": "States currentness among the records."
+    },
+    "critical_failures": [],
+    "evidence": [
+      "The v2 amendment moves the review to 10:00 and replaces v1."
+    ],
+    "evidence_refs": [
+      "claim:amended-time",
+      "claim:current-supported-time",
+      "step:read-amendment",
+      "step:compare-records"
+    ],
+    "calibration_judgment": "not_assessed",
+    "calibration_evidence": []
+  }
+]

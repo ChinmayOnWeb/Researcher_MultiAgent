@@ -1,0 +1,16 @@
+{
+  "artifact_sha256": "469d51ad891b9ca438c1205b5907cf305dc6dab59525b027189effff812206ac",
+  "case_id": "extremal-noncut-vertices",
+  "exit_code": 0,
+  "failure_class": "schema_rejection",
+  "fixture_kind": "captured_provider_payload",
+  "outcome": "succeeded",
+  "protocol_validity": "invalid",
+  "response_file": "response.json",
+  "source_file": "runs/ten-styles-live-approved-20260923-extremal-noncut-vertices/trials/extremal-noncut-vertices-01-baseline/provider-result.json",
+  "source_run": "runs/ten-styles-live-approved-20260923-extremal-noncut-vertices",
+  "source_trial": "runs/ten-styles-live-approved-20260923-extremal-noncut-vertices/trials/extremal-noncut-vertices-01-baseline",
+  "synthetic": false,
+  "validation_error": "claims[0].depends_on[0]: unknown claims reference 'step-spanning-tree'",
+  "validation_details": {"json_path": "claims[0].depends_on[0]", "bad_reference": "step-spanning-tree", "expected_namespace": "claims", "available_ids": ["claim-result", "claim-spanning-tree-fact", "claim-tree-leaf-fact"]}
+}

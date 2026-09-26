@@ -14,7 +14,7 @@ from mathresearch.contracts.validation import ValidationError, require_exact_fie
 from mathresearch.research.contracts import validate_action, validate_decision_details, validate_result
 
 
-EVENT_TYPES = frozenset({"research_initialized", "provider_configured", "decision_recorded", "action_intended", "action_finished", "gate_opened", "gate_answered", "research_finished"})
+EVENT_TYPES = frozenset({"research_initialized", "provider_configured", "decision_recorded", "action_intended", "action_finished", "gate_opened", "gate_answered", "research_finished", "provider_attempt_intended", "provider_attempt_finished"})
 TERMINAL = frozenset({"complete", "incomplete", "blocked", "budget_exhausted"})
 
 
@@ -116,21 +116,24 @@ class ResearchEvent:
     run_id: str
     occurred_at: str
     body: Mapping[str, Any]
+    schema_version: int = 3
 
     @classmethod
     def from_json(cls, payload: Any) -> "ResearchEvent":
         data = require_object(payload, "research_event")
         require_exact_fields(data, "research_event", {"schema_version", "record_type", "sequence", "event_type", "run_id", "occurred_at", "body"})
-        if data["schema_version"] != 3 or data["record_type"] != "research_event":
-            raise ValidationError("research_event", "must be a version-three research event")
+        version = data["schema_version"]
+        if version not in {3, 4} or data["record_type"] != "research_event":
+            raise ValidationError("research_event", "must be a version-three or version-four research event")
         event_type = require_string(data["event_type"], "event_type")
-        if event_type not in EVENT_TYPES: raise ValidationError("event_type", "is unknown")
+        if event_type not in EVENT_TYPES or (version == 3 and event_type.startswith("provider_attempt_")):
+            raise ValidationError("event_type", "is unknown for this event version")
         body = _validate_body(event_type, data["body"])
         return cls(require_nonnegative_integer(data["sequence"], "sequence"), event_type,
-                   require_identifier(data["run_id"], "run_id"), _timestamp(data["occurred_at"], "occurred_at"), MappingProxyType(body))
+                   require_identifier(data["run_id"], "run_id"), _timestamp(data["occurred_at"], "occurred_at"), MappingProxyType(body), version)
 
     def to_json(self) -> dict[str, Any]:
-        return {"schema_version": 3, "record_type": "research_event", "sequence": self.sequence,
+        return {"schema_version": self.schema_version, "record_type": "research_event", "sequence": self.sequence,
                 "event_type": self.event_type, "run_id": self.run_id, "occurred_at": self.occurred_at,
                 "body": dict(self.body)}
 
@@ -145,7 +148,7 @@ def _validate_body(kind: str, payload: Any) -> dict[str, Any]:
         checked = {key: require_string(data[key], f"{kind}.{key}") for key in keys if key != "control_argv"} | {"control_argv": [require_string(x, "control_argv[]") for x in data["control_argv"]]}
         if not checked["executable"] or not checked["version"]: raise ValidationError(kind, "executable and version must be nonempty")
         if checked["effort_requested"] not in {"medium", "high"}: raise ValidationError("effort_requested", "must be medium or high")
-        if checked["prompt_version"] != "research-v1": raise ValidationError("prompt_version", "must equal research-v1")
+        if checked["prompt_version"] not in {"research-v1", "research-v2", "research-v3", "research-v4", "research-v5"}: raise ValidationError("prompt_version", "is unsupported")
         return checked
     if kind == "decision_recorded":
         require_exact_fields(data, kind, {"decision_id", "kind", "reason_code", "action", "details"})
@@ -171,6 +174,69 @@ def _validate_body(kind: str, payload: Any) -> dict[str, Any]:
             if exit_code != 0 or result is None or error is not None: raise ValidationError("action_finished", "success requires exit code zero, result, and null error")
         elif result is not None: raise ValidationError("result", "must be null for a non-success outcome")
         return {"action_id": require_identifier(data["action_id"], "action_id"), "outcome": outcome, "exit_code": exit_code, "stdout_sha256": _sha(data["stdout_sha256"], "stdout_sha256"), "stderr_sha256": _sha(data["stderr_sha256"], "stderr_sha256"), "result": result, "error": error, "telemetry": _telemetry(data["telemetry"])}
+    if kind == "provider_attempt_intended":
+        keys = {"attempt_id", "action_id", "parent_attempt_id", "attempt_kind", "retry_reason", "prompt_version", "prompt_sha256", "schema_sha256", "input_bytes"}
+        require_exact_fields(data, kind, keys)
+        parent = None if data["parent_attempt_id"] is None else require_identifier(
+            data["parent_attempt_id"], "parent_attempt_id")
+        attempt_kind = require_string(data["attempt_kind"], "attempt_kind")
+        if attempt_kind not in {"initial", "structural_repair"}:
+            raise ValidationError("attempt_kind", "is invalid")
+        prompt_version = require_string(data["prompt_version"], "prompt_version")
+        if prompt_version not in {"research-v1", "research-v2", "research-v3", "research-v4", "research-v5", "structural-repair-v2", "structural-repair-v3"}:
+            raise ValidationError("prompt_version", "is invalid")
+        return {"attempt_id": require_identifier(data["attempt_id"], "attempt_id"),
+                "action_id": require_identifier(data["action_id"], "action_id"),
+                "parent_attempt_id": parent, "attempt_kind": attempt_kind,
+                "retry_reason": _nullable_string(data["retry_reason"], "retry_reason"),
+                "prompt_version": prompt_version,
+                "prompt_sha256": _sha(data["prompt_sha256"], "prompt_sha256"),
+                "schema_sha256": _sha(data["schema_sha256"], "schema_sha256"),
+                "input_bytes": require_nonnegative_integer(data["input_bytes"], "input_bytes")}
+    if kind == "provider_attempt_finished":
+        keys = {"attempt_id", "outcome", "exit_code", "stdout_sha256", "stderr_sha256", "error", "telemetry", "failure_class", "session_id_marker_count"}
+        # repair_review was added within v4; accept earlier v4 journal entries.
+        if frozenset(data) not in {frozenset(keys), frozenset(keys | {"repair_review"})}:
+            require_exact_fields(data, kind, keys | {"repair_review"})
+        outcome = require_string(data["outcome"], "outcome")
+        if outcome not in {"succeeded", "failed", "timed_out", "cancelled", "launch_failed", "protocol_error"}:
+            raise ValidationError("outcome", "is invalid")
+        exit_code = data["exit_code"]
+        if exit_code is not None and (isinstance(exit_code, bool) or not isinstance(exit_code, int)):
+            raise ValidationError("exit_code", "must be an integer or null")
+        failure_class = _nullable_string(data["failure_class"], "failure_class")
+        if failure_class not in {None, "provider_usage_limit", "provider_failure", "timeout", "protocol_error", "other"}:
+            raise ValidationError("failure_class", "is invalid")
+        review = data.get("repair_review")
+        if review is not None:
+            review = require_object(review, "repair_review")
+            require_exact_fields(review, "repair_review", {"rejected_payload", "corrected_payload", "validation_errors", "change_explanation", "diff"})
+            if not isinstance(review["rejected_payload"], Mapping):
+                raise ValidationError("repair_review.rejected_payload", "must be an object")
+            if review["corrected_payload"] is not None and not isinstance(review["corrected_payload"], Mapping):
+                raise ValidationError("repair_review.corrected_payload", "must be an object or null")
+            if (not isinstance(review["validation_errors"], Mapping) or
+                    not isinstance(review["change_explanation"], str) or not review["change_explanation"] or
+                    not isinstance(review["diff"], list)):
+                raise ValidationError("repair_review", "must contain validation errors and a diff array")
+            for index, change in enumerate(review["diff"]):
+                change = require_object(change, f"repair_review.diff[{index}]")
+                require_exact_fields(change, f"repair_review.diff[{index}]", {"path", "before", "after"})
+                require_string(change["path"], f"repair_review.diff[{index}].path", allow_empty=False)
+            try:
+                if len(canonical_json_bytes(dict(review))) > 262144:
+                    raise ValidationError("repair_review", "must be at most 262144 UTF-8 bytes")
+            except (TypeError, ValueError) as exc:
+                raise ValidationError("repair_review", "must contain JSON-compatible values") from exc
+            review = dict(review)
+        return {"attempt_id": require_identifier(data["attempt_id"], "attempt_id"),
+                "outcome": outcome, "exit_code": exit_code,
+                "stdout_sha256": _sha(data["stdout_sha256"], "stdout_sha256"),
+                "stderr_sha256": _sha(data["stderr_sha256"], "stderr_sha256"),
+                "error": _nullable_string(data["error"], "error"),
+                "telemetry": _telemetry(data["telemetry"]), "failure_class": failure_class,
+                "session_id_marker_count": require_nonnegative_integer(data["session_id_marker_count"], "session_id_marker_count"),
+                "repair_review": review}
     if kind == "gate_opened":
         require_exact_fields(data, kind, {"gate_id", "kind", "questions", "allowed_response", "resume_token"})
         questions, allowed = data["questions"], data["allowed_response"]
@@ -217,18 +283,29 @@ class ResearchSnapshot:
     gate_responses: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     # Canonical bytes preserve the exact packet attached to each durable intent.
     intent_packets: Mapping[str, bytes] = field(default_factory=dict)
+    attempts: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    pending_attempt_id: str | None = None
 
     def state_json(self) -> dict[str, Any]:
-        return {"schema_version": 3, "record_type": "research_state", "run_id": self.request.run_id, "initialized_at": self.initialized_at, "sequence": self.sequence, "status": self.status, "pending_action_id": self.pending_action_id, "pending_gate_id": None if self.pending_gate is None else self.pending_gate["gate_id"], "model_calls_used": self.model_calls_used, "tool_calls_used": self.tool_calls_used, "branches_started": self.branches_started, "repairs_started": self.repairs_started, "latest_draft_id": self.latest_draft_id, "latest_audit_id": self.latest_audit_id, "final_assessment": self.final_assessment, "reason": self.reason, "report_path": "report.md" if self.status in TERMINAL else None}
+        attempt_count = len(self.attempts) + (1 if self.pending_attempt_id else 0)
+        return {"schema_version": 4, "record_type": "research_state", "run_id": self.request.run_id, "initialized_at": self.initialized_at, "sequence": self.sequence, "status": self.status, "pending_action_id": self.pending_action_id, "pending_gate_id": None if self.pending_gate is None else self.pending_gate["gate_id"], "model_calls_used": self.model_calls_used, "tool_calls_used": self.tool_calls_used, "branches_started": self.branches_started, "repairs_started": self.repairs_started, "latest_draft_id": self.latest_draft_id, "latest_audit_id": self.latest_audit_id, "final_assessment": self.final_assessment, "reason": self.reason, "report_path": "report.md" if self.status in TERMINAL else None, "pending_attempt_id": self.pending_attempt_id, "provider_attempt_count": attempt_count, "legacy_action_call_count": max(0, self.model_calls_used - attempt_count), "call_count_basis": "provider_attempt_intents_with_legacy_v3_action_fallback"}
 
 
 def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ...]) -> ResearchSnapshot:
     if not events: raise ValueError("history requires initialization")
-    request: ResearchRequest | None = None; initialized_at = ""; provider_config: Mapping[str, Any] | None = None; actions: dict[str, Mapping[str, Any]] = {}; decisions: list[Mapping[str, Any]] = []; intended: dict[str, Mapping[str, Any]] = {}; results: dict[str, Any] = {}; source_descriptors: dict[str, dict[str, Any]] = {}; source_records: dict[str, Mapping[str, Any]] = {}; tool_results: dict[str, Mapping[str, Any]] = {}; outcomes: dict[str, Mapping[str, Any]] = {}; action_telemetry: dict[str, Mapping[str, Any]] = {}; gate_responses: dict[str, Mapping[str, Any]] = {}; additional_user_input: list[Mapping[str, str]] = []; pending: str | None = None; gate: Mapping[str, Any] | None = None; terminal: Mapping[str, Any] | None = None; finished_at: str | None = None; gate_ids: set[str] = set(); response_digests: dict[str, str] = {}; run_id = events[0].run_id; previous_time = ""
+    request: ResearchRequest | None = None; initialized_at = ""; provider_config: Mapping[str, Any] | None = None; actions: dict[str, Mapping[str, Any]] = {}; decisions: list[Mapping[str, Any]] = []; intended: dict[str, Mapping[str, Any]] = {}; results: dict[str, Any] = {}; source_descriptors: dict[str, dict[str, Any]] = {}; source_records: dict[str, Mapping[str, Any]] = {}; tool_results: dict[str, Mapping[str, Any]] = {}; outcomes: dict[str, Mapping[str, Any]] = {}; action_telemetry: dict[str, Mapping[str, Any]] = {}; gate_responses: dict[str, Mapping[str, Any]] = {}; additional_user_input: list[Mapping[str, str]] = []; pending: str | None = None; gate: Mapping[str, Any] | None = None; terminal: Mapping[str, Any] | None = None; finished_at: str | None = None; gate_ids: set[str] = set(); response_digests: dict[str, str] = {}; attempts: dict[str, Mapping[str, Any]] = {}; attempt_intents: dict[str, Mapping[str, Any]] = {}; pending_attempt: str | None = None; run_id = events[0].run_id; previous_time = ""
     for expected, item in enumerate(events, 1):
         if item.sequence != expected or item.run_id != run_id or (previous_time and item.occurred_at < previous_time): raise ValueError("events must be contiguous and chronological")
         previous_time = item.occurred_at
         if terminal is not None: raise ValueError("event after terminal")
+        ambiguous_finish_decision = (item.event_type == "decision_recorded" and
+            item.body.get("kind") == "finish" and
+            item.body.get("reason_code") == "ambiguous_execution" and
+            item.body.get("details", {}).get("finish_status") == "blocked")
+        if (pending_attempt is not None and item.event_type not in {
+                "provider_attempt_finished", "research_finished"} and
+                not ambiguous_finish_decision):
+            raise ValueError("only provider attempt completion or an ambiguous terminal stop may follow an attempt intent")
         if item.event_type == "research_initialized":
             if request is not None or expected != 1: raise ValueError("initialization must occur once first")
             request = ResearchRequest.from_json(item.body["request"]); initialized_at = item.occurred_at
@@ -274,14 +351,21 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
             intended[action_id] = item.body
         elif item.event_type == "action_finished":
             action_id = item.body["action_id"]
-            if pending != action_id or action_id not in intended: raise ValueError("finish without intent or wrong action")
+            if pending != action_id or action_id not in intended or pending_attempt is not None: raise ValueError("finish without intent, pending provider attempt, or wrong action")
             action = actions[action_id]
+            if (action["kind"] == "worker" and item.body["outcome"] != "launch_failed" and
+                    any(event.schema_version >= 4 for event in events if event.event_type == "action_intended" and event.body["action_id"] == action_id) and
+                    not any(value["action_id"] == action_id for value in attempt_intents.values())):
+                raise ValueError("version-four worker action must have a provider attempt intent")
             outcomes[action_id] = MappingProxyType({"outcome": item.body["outcome"], "exit_code": item.body["exit_code"], "error": item.body["error"]})
             action_telemetry[action_id] = MappingProxyType(dict(item.body["telemetry"]))
             if item.body["outcome"] == "succeeded":
                 try:
                     if action["kind"] == "worker":
-                        result = validate_result(action["role"], item.body["result"])
+                        prompt_version = action.get("payload", {}).get("prompt_version", "research-v2")
+                        result_version = prompt_version
+                        result = validate_result(action["role"], item.body["result"],
+                            prompt_version=result_version)
                     else:
                         requested_id = action["payload"]["arguments"].get("source_id")
                         requested_source = source_descriptors.get(requested_id) if isinstance(requested_id, str) else None
@@ -301,6 +385,29 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
                         captured = result["result"]["source"]
                         source_records[captured["id"]] = MappingProxyType(dict(captured))
             pending = None
+        elif item.event_type == "provider_attempt_intended":
+            body = item.body
+            attempt_id, action_id = body["attempt_id"], body["action_id"]
+            action_intent_version = next((event.schema_version for event in events if event.event_type == "action_intended" and event.body["action_id"] == action_id), None)
+            if action_intent_version != 4 or pending != action_id or action_id not in intended or actions[action_id]["kind"] != "worker":
+                raise ValueError("provider attempt requires a pending version-four worker action")
+            if attempt_id in attempt_intents or pending_attempt is not None:
+                raise ValueError("duplicate or overlapping provider attempt")
+            parent_id = body["parent_attempt_id"]
+            if body["attempt_kind"] == "initial":
+                if parent_id is not None or any(value["action_id"] == action_id for value in attempt_intents.values()):
+                    raise ValueError("initial attempt must be the first attempt for its action")
+            elif (parent_id not in attempts or attempts[parent_id]["action_id"] != action_id or
+                  attempts[parent_id].get("failure_class") != "protocol_error"):
+                raise ValueError("repair attempt must follow a failed attempt for the same action")
+            attempt_intents[attempt_id] = body
+            pending_attempt = attempt_id
+        elif item.event_type == "provider_attempt_finished":
+            attempt_id = item.body["attempt_id"]
+            if pending_attempt != attempt_id or attempt_id not in attempt_intents:
+                raise ValueError("provider attempt finish without matching intent")
+            attempts[attempt_id] = MappingProxyType(dict(item.body) | dict(attempt_intents[attempt_id]))
+            pending_attempt = None
         elif item.event_type == "gate_opened":
             if gate is not None or item.body["gate_id"] in gate_ids: raise ValueError("duplicate gate")
             gate = item.body
@@ -349,17 +456,23 @@ def replay_research_events(events: list[ResearchEvent] | tuple[ResearchEvent, ..
             pending_is_safe_stop = (pending is not None and gate is None and (
                 (item.body["status"] == "blocked" and item.body["reason"] == "ambiguous_execution") or
                 (item.body["status"] == "budget_exhausted" and pending not in intended)))
-            if (pending is not None and not pending_is_safe_stop) or gate is not None:
+            pending_attempt_is_safe_stop = pending_attempt is not None and item.body["status"] == "blocked" and item.body["reason"] == "ambiguous_execution"
+            if (pending is not None and not pending_is_safe_stop and not pending_attempt_is_safe_stop) or gate is not None:
                 raise ValueError("finish while action or gate pending")
             terminal = item.body
             finished_at = item.occurred_at
     if request is None: raise ValueError("initialization required")
     status = terminal["status"] if terminal else ("awaiting_human" if gate else ("running" if pending else "ready"))
-    model = sum(1 for action_id in intended if actions[action_id]["kind"] == "worker"); tools = len(intended) - model
+    legacy_worker_ids = {item.body["action_id"] for item in events
+                         if item.event_type == "action_intended" and item.schema_version == 3
+                         and actions[item.body["action_id"]]["kind"] == "worker"}
+    legacy_model = sum(1 for action_id in legacy_worker_ids
+                       if not any(value["action_id"] == action_id for value in attempt_intents.values()))
+    model = len(attempt_intents) + legacy_model; tools = len(intended) - sum(1 for action_id in intended if actions[action_id]["kind"] == "worker")
     completed = [(action_id, action) for action_id, action in actions.items() if action_id in results]
     draft_ids = [action_id for action_id, action in completed if action["role"] in {"answer", "branch", "synthesize", "revise"}]
     audit_ids = [action_id for action_id, action in completed if action["role"] == "audit"]
     latest_draft = draft_ids[-1] if draft_ids else None; latest_audit = audit_ids[-1] if audit_ids else None
     repair_rounds = {action["round"] for action_id, action in actions.items() if action["round"] > 0 and action_id in results}
     repair_rounds.update(decision["details"]["round"] for decision in decisions if decision["details"]["round"] > 0)
-    return ResearchSnapshot(request, initialized_at, len(events), status, provider_config, tuple(decisions), MappingProxyType(actions), MappingProxyType(results), MappingProxyType(source_records), MappingProxyType(tool_results), tuple(additional_user_input), pending, gate, model, tools, sum(1 for a in actions.values() if a["branch"] in {"a", "b", "c"}), len(repair_rounds), latest_draft, latest_audit, None if terminal is None else terminal["assessment"], None if terminal is None else terminal["reason"], MappingProxyType(source_descriptors), MappingProxyType(outcomes), MappingProxyType(action_telemetry), finished_at, frozenset(intended), MappingProxyType(gate_responses), MappingProxyType({action_id: canonical_json_bytes(item["packet"]) for action_id, item in intended.items()}))
+    return ResearchSnapshot(request, initialized_at, len(events), status, provider_config, tuple(decisions), MappingProxyType(actions), MappingProxyType(results), MappingProxyType(source_records), MappingProxyType(tool_results), tuple(additional_user_input), pending, gate, model, tools, sum(1 for a in actions.values() if a["branch"] in {"a", "b", "c"}), len(repair_rounds), latest_draft, latest_audit, None if terminal is None else terminal["assessment"], None if terminal is None else terminal["reason"], MappingProxyType(source_descriptors), MappingProxyType(outcomes), MappingProxyType(action_telemetry), finished_at, frozenset(intended), MappingProxyType(gate_responses), MappingProxyType({action_id: canonical_json_bytes(item["packet"]) for action_id, item in intended.items()}), MappingProxyType(attempts), pending_attempt)

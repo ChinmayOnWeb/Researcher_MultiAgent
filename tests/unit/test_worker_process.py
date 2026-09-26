@@ -111,15 +111,33 @@ class ExecuteWorkerTests(unittest.TestCase):
 
     def test_timeout_kills_a_spawned_descendant(self) -> None:
         marker = self.root / "orphaned-child.txt"
-        self.write_child(
-            "import subprocess, sys, time\n"
-            f"subprocess.Popen([sys.executable, '-c', {repr('import pathlib,time; time.sleep(2); pathlib.Path(' + repr(str(marker)) + ').write_text(\"orphan\")')}])\n"
-            "time.sleep(30)\n"
-        )
+        orphan_code = ("import pathlib,time; time.sleep(2); "
+                       f"pathlib.Path({str(marker)!r}).write_text('orphan')")
+        child_source = ("import subprocess, sys, time\n"
+            f"subprocess.Popen([sys.executable, '-c', {orphan_code!r}])\n"
+            "time.sleep(30)\n")
+        self.write_child(child_source)
         output = execute_worker(_StubAdapter(self.script), self.task(), scratch=self.scratch, timeout_seconds=1)
         self.assertEqual(output.outcome, "timed_out")
         time.sleep(3)
         self.assertFalse(marker.exists(), "timeout left a provider descendant alive")
+
+    def test_timeout_covers_output_drain_after_provider_exits(self) -> None:
+        marker = self.root / "orphaned-child.txt"
+        orphan_code = ("import pathlib,time; time.sleep(2); "
+                       f"pathlib.Path({str(marker)!r}).write_text('orphan')")
+        self.write_child(
+            "import json, pathlib, subprocess, sys\n"
+            f"subprocess.Popen([sys.executable, '-c', {orphan_code!r}])\n"
+            "pathlib.Path('result.json').write_text('{\\\"ok\\\":true}')\n"
+        )
+        started = time.monotonic()
+        output = execute_worker(_StubAdapter(self.script), self.task(),
+                                scratch=self.scratch, timeout_seconds=1)
+        self.assertEqual(output.outcome, "timed_out")
+        self.assertLess(time.monotonic() - started, 8)
+        time.sleep(3)
+        self.assertFalse(marker.exists(), "timeout left a pipe-holding provider descendant alive")
 
     def test_diagnostic_captures_are_bounded_while_child_is_drained(self) -> None:
         self.write_child("import sys; sys.stdout.buffer.write(b'x' * (9 * 1024 * 1024))\n")

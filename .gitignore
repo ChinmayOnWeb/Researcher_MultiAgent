@@ -9,3 +9,5 @@ tmpcheck/
 build/
 outside-capture.bin
 /runs/
+**/.run.lock
+**/worker-tmp/

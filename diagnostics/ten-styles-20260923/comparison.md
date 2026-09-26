@@ -36,3 +36,5 @@ This is a small diagnostic, not a statistical performance estimate. All trial re
 ## Conclusion
 
 This diagnostic found no demonstrated mathematical quality gain from the pipeline. It did find a large reliability difference in structured-output acceptance in the baseline, paired with overly cautious or stale terminal statuses in the pipeline. The pipeline used about six to nine times as many observed sessions per completed case and took several times longer. The two usage-limit failures and one replicate per style limit any broad conclusion.
+
+See [the methodology addendum](methodology-addendum.md) for the scope limits and preserved schema-rejected payloads.

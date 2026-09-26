@@ -35,7 +35,9 @@ def valid_draft() -> dict[str, object]:
         "answer": "The supplied definition is sufficient for this scoped deduction.",
         "question_status": "unresolved",
         "claims": [{"id": "claim-one", "statement": "This is a definition.", "critical": True,
-                    "kind": "definition", "citations": [], "step_ids": [], "tool_ids": [], "depends_on": []}],
+                    "kind": "definition", "citations": [], "step_ids": [], "tool_ids": [], "depends_on": [],
+                    "basis": "derivation", "basis_reference": "Derived by definition",
+                    "scope_step_ids": [], "discharged_by_step_ids": []}],
         "proof_steps": [], "approaches": [], "open_questions": [], "tool_requests": [], "change_log": [],
     }
 
@@ -48,7 +50,8 @@ def valid_frame() -> dict[str, object]:
 
 def valid_audit() -> dict[str, object]:
     return {"checks": [{"claim_id": "claim-one", "verdict": "supported",
-                         "reasoning": "The definition is stated explicitly.", "checked_step_ids": []}],
+                         "reasoning": "The definition is stated explicitly.", "checked_step_ids": [],
+                         "basis_verdict": "applicable", "basis_reasoning": "The named basis matches."}],
             "challenges": [{"claim_id": "claim-one", "attack": "Check its scope.",
                             "result": "It is only a definition.", "outcome": "survives", "tool_ids": []}],
             "missing_evidence": [], "tool_requests": [], "recommended_action": "finish"}
@@ -60,6 +63,20 @@ class ResearchRequestTests(unittest.TestCase):
         payload["question"] = 'Are there any odd numbers that are "perfect"?\nExplain π-related analogies only if relevant.'
         payload["goal"] = None
         self.assertEqual(ResearchRequest.from_json(payload).to_json(), payload)
+
+    def test_v3_request_remains_lossless_and_v4_records_execution_policy(self) -> None:
+        legacy = valid_request_payload()
+        self.assertEqual(ResearchRequest.from_json(legacy).to_json(), legacy)
+        adaptive = build_request_payload(run_id="adaptive-run", question="q",
+            objective="prove", mode="deep", model="gpt-5.6-terra",
+            execution_policy="adaptive")
+        self.assertEqual(adaptive["schema_version"], 4)
+        self.assertEqual(ResearchRequest.from_json(adaptive).to_json(), adaptive)
+        quick = build_request_payload(run_id="quick-adaptive", question="q",
+            objective="answer", mode="quick", model="gpt-5.6-terra",
+            execution_policy="adaptive")
+        with self.assertRaisesRegex(ValidationError, "Quick supports only"):
+            ResearchRequest.from_json(quick)
 
     def test_builder_defaults_without_injecting_goal(self) -> None:
         payload = build_request_payload(run_id="question-only", question="q", objective="answer",
@@ -107,16 +124,113 @@ class ResearchRequestTests(unittest.TestCase):
 
 
 class WorkerResultTests(unittest.TestCase):
+    def test_captured_dependency_failures_report_exact_reference_context(self) -> None:
+        root = Path(__file__).parents[1] / "fixtures" / "research" / "diagnostic_regressions"
+        expected = {
+            "induction-weighted-sum": ("claims[0].depends_on[0]", "claims"),
+            "calculus-log-integral": ("claims[0].depends_on[0]", "claims"),
+            "extremal-noncut-vertices": ("claims[0].depends_on[0]", "claims"),
+            "probability-overlap-hh": ("proof_steps[1].depends_on[0]", "proof_steps"),
+        }
+        for case_id, (path, namespace) in expected.items():
+            with self.subTest(case_id=case_id):
+                payload = json.loads((root / case_id / "response.json").read_text(encoding="utf-8"))
+                metadata = json.loads((root / case_id / "metadata.json").read_text(encoding="utf-8"))
+                with self.assertRaises(ValidationError) as raised:
+                    validate_result("answer", payload)
+                details = raised.exception.details
+                self.assertEqual(details["json_path"], path)
+                self.assertEqual(details["expected_namespace"], namespace)
+                self.assertEqual(details, metadata["validation_details"])
+                self.assertIn(details["bad_reference"], ("base-case", "ibp-epsilon", "step-spanning-tree", "state-def"))
+                items = payload["claims"] if namespace == "claims" else payload["proof_steps"]
+                self.assertEqual(details["available_ids"], sorted(item["id"] for item in items))
+
+    def test_correcting_only_wrong_namespace_links_preserves_required_support(self) -> None:
+        root = Path(__file__).parents[1] / "fixtures" / "research" / "diagnostic_regressions"
+        for case_id in ("induction-weighted-sum", "calculus-log-integral",
+                        "extremal-noncut-vertices", "probability-overlap-hh"):
+            with self.subTest(case_id=case_id):
+                payload = json.loads((root / case_id / "response.json").read_text(encoding="utf-8"))
+                claim_ids = {claim["id"] for claim in payload["claims"]}
+                step_ids = {step["id"] for step in payload["proof_steps"]}
+                for claim in payload["claims"]:
+                    claim["depends_on"] = [value for value in claim["depends_on"] if value in claim_ids]
+                for step in payload["proof_steps"]:
+                    step["depends_on"] = [value for value in step["depends_on"] if value in step_ids]
+                checked = validate_result("answer", payload)
+                self.assertTrue(any(claim["kind"] == "deduction" and
+                                    (claim["step_ids"] or claim["tool_ids"])
+                                    for claim in checked["claims"]))
+
+    def test_reference_namespaces_cycles_duplicates_and_support_remain_strict(self) -> None:
+        draft = valid_draft()
+        draft["proof_steps"] = [{"id": "step-one", "statement": "s", "justification": "j",
+                                  "depends_on": [], "citations": []}]
+        draft["claims"][0]["kind"] = "deduction"  # type: ignore[index]
+        draft["claims"][0]["step_ids"] = ["step-one"]  # type: ignore[index]
+        draft["claims"][0]["depends_on"] = ["step-one"]  # type: ignore[index]
+        with self.assertRaises(ValidationError) as raised:
+            validate_result("answer", draft, prompt_version="research-v3")
+        self.assertEqual(raised.exception.details["expected_namespace"], "claims")
+        draft["claims"][0]["depends_on"] = []  # type: ignore[index]
+        draft["claims"][0]["step_ids"] = []  # type: ignore[index]
+        with self.assertRaisesRegex(ValidationError, "deductions require"):
+            validate_result("answer", draft, prompt_version="research-v3")
+        draft["claims"][0]["step_ids"] = ["step-one"]  # type: ignore[index]
+        draft["proof_steps"][0]["depends_on"] = ["step-one"]  # type: ignore[index]
+        with self.assertRaisesRegex(ValidationError, "DAG"):
+            validate_result("answer", draft, prompt_version="research-v3")
+        draft["proof_steps"][0]["depends_on"] = []  # type: ignore[index]
+        draft["proof_steps"].append(dict(draft["proof_steps"][0]))  # type: ignore[union-attr]
+        with self.assertRaisesRegex(ValidationError, "unique"):
+            validate_result("answer", draft, prompt_version="research-v3")
+
+    def test_v5_reductio_contract_rejects_scope_on_derivations_and_requires_discharge_link(self) -> None:
+        nonlocal_scope = valid_draft()
+        nonlocal_scope["claims"][0].update({"kind": "deduction", "step_ids": ["step-one"],
+            "scope_step_ids": ["step-one"]})  # type: ignore[index]
+        nonlocal_scope["proof_steps"] = [{"id": "step-one", "statement": "A step", "justification": "Direct.",
+            "depends_on": [], "citations": []}]
+        with self.assertRaisesRegex(ValidationError, "only local assumptions may declare scope"):
+            validate_result("answer", nonlocal_scope, prompt_version="research-v5")
+
+        reductio = {"answer": "The assumption is impossible.", "question_status": "answered",
+            "claims": [
+                {"id": "claim-rationality", "statement": "Assume rationality.", "critical": True,
+                 "kind": "assumption", "citations": [], "step_ids": ["step-assume"], "tool_ids": [],
+                 "depends_on": [], "basis": "local_assumption", "basis_reference": "Temporary reductio assumption.",
+                 "scope_step_ids": ["step-assume", "step-contradiction"],
+                 "discharged_by_step_ids": ["step-contradiction"]},
+                {"id": "claim-irrationality", "statement": "The value is irrational.", "critical": True,
+                 "kind": "deduction", "citations": [], "step_ids": ["step-conclusion"], "tool_ids": [],
+                 "depends_on": ["claim-rationality"], "basis": "derivation",
+                 "basis_reference": "The reductio discharges the rationality assumption.",
+                 "scope_step_ids": [], "discharged_by_step_ids": []}],
+            "proof_steps": [
+                {"id": "step-assume", "statement": "Assume rationality.", "justification": "Reductio.",
+                 "depends_on": [], "citations": []},
+                {"id": "step-contradiction", "statement": "Derive a contradiction.", "justification": "The assumption conflicts with the proof.",
+                 "depends_on": ["step-assume"], "citations": []},
+                {"id": "step-conclusion", "statement": "Conclude irrationality.", "justification": "Discharge the assumption.",
+                 "depends_on": ["step-contradiction"], "citations": []}],
+            "approaches": [], "open_questions": [], "tool_requests": [], "change_log": []}
+        with self.assertRaisesRegex(ValidationError, "must be included in a dependent deduction claim"):
+            validate_result("answer", reductio, prompt_version="research-v5")
+        reductio["claims"][1]["step_ids"] = ["step-contradiction", "step-conclusion"]  # type: ignore[index]
+        self.assertEqual(validate_result("answer", reductio, prompt_version="research-v5"), reductio)
+
     def test_role_results_validate_and_schemas_are_strict(self) -> None:
         for role, payload in (("frame", valid_frame()), ("branch", valid_draft()), ("audit", valid_audit())):
             with self.subTest(role=role):
-                self.assertEqual(validate_result(role, payload), payload)
+                version = "research-v3" if role in {"branch", "audit"} else "research-v2"
+                self.assertEqual(validate_result(role, payload, prompt_version=version), payload)
                 self.assertFalse(result_schema(role).get("additionalProperties", True))
 
     def test_model_output_cannot_supply_coordinator_fields(self) -> None:
         draft = valid_draft(); draft["run_status"] = "complete"
         with self.assertRaises(ValidationError):
-            validate_result("branch", draft)
+            validate_result("branch", draft, prompt_version="research-v3")
 
     def test_draft_and_audit_cross_references_are_strict(self) -> None:
         draft = valid_draft(); draft["claims"] = []
@@ -125,17 +239,17 @@ class WorkerResultTests(unittest.TestCase):
         draft = valid_draft(); draft["proof_steps"] = [{"id": "step-one", "statement": "s", "justification": "j", "depends_on": ["step-one"], "citations": []}]
         draft["claims"][0]["step_ids"] = ["step-one"]  # type: ignore[index]
         with self.assertRaisesRegex(ValidationError, "proof_steps"):
-            validate_result("branch", draft)
+            validate_result("branch", draft, prompt_version="research-v3")
         audit = valid_audit(); audit["checks"][0]["claim_id"] = "absent"  # type: ignore[index]
         with self.assertRaisesRegex(ValidationError, "checks"):
-            validate_audit_for_draft(audit, valid_draft())
+            validate_audit_for_draft(audit, valid_draft(), prompt_version="research-v3")
 
     def test_draft_tool_ids_are_receipt_references_not_local_proposal_ids(self) -> None:
         draft = valid_draft()
         draft["tool_requests"] = [{"id": "proposal-one", "operation": "check_integer",
                                     "arguments": {"n": 6}}]
         draft["claims"][0]["tool_ids"] = ["receipt-one"]  # type: ignore[index]
-        self.assertEqual(validate_result("branch", draft)["claims"][0]["tool_ids"], ["receipt-one"])
+        self.assertEqual(validate_result("branch", draft, prompt_version="research-v3")["claims"][0]["tool_ids"], ["receipt-one"])
 
     def test_audit_step_references_are_local_but_tool_ids_name_receipts(self) -> None:
         draft = valid_draft()
@@ -144,10 +258,10 @@ class WorkerResultTests(unittest.TestCase):
         audit = valid_audit()
         audit["checks"][0]["checked_step_ids"] = ["absent"]  # type: ignore[index]
         with self.assertRaisesRegex(ValidationError, r"checks\[0\].checked_step_ids"):
-            validate_audit_for_draft(audit, draft)
+            validate_audit_for_draft(audit, draft, prompt_version="research-v3")
         audit = valid_audit()
         audit["challenges"][0]["tool_ids"] = ["receipt-one"]  # type: ignore[index]
-        self.assertEqual(validate_audit_for_draft(audit, valid_draft())["challenges"][0]["tool_ids"], ["receipt-one"])
+        self.assertEqual(validate_audit_for_draft(audit, valid_draft(), prompt_version="research-v3")["challenges"][0]["tool_ids"], ["receipt-one"])
 
     def test_recursive_validator_accepts_only_json_null_for_null_schema(self) -> None:
         self.assertIsNone(_validate_shape(None, {"type": "null"}, "value"))

@@ -30,6 +30,7 @@ class WorkerOutput:
     stderr: bytes
     payload: Mapping[str, Any] | None
     error: str | None
+    validation_details: Mapping[str, Any] | None = None
 
 
 class Adapter(Protocol):

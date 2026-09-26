@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "purpose": "Held-out cases frozen before any provider trial; grader truth is stored separately.",
+  "cases": [
+    {
+      "id": "holdout-quick-triangular-sum",
+      "question": "Prove that for every positive integer n, 1 + 2 + 3 + ... + n = n(n + 1)/2. Give a concise proof.",
+      "objective": "prove",
+      "mode": "quick",
+      "sources": [],
+      "expected_obligations": ["State the identity for every positive integer n.", "Give a valid proof, such as induction or pairing."],
+      "forbidden_claims": ["Checking finitely many values as proof of the universal identity."],
+      "checks": [],
+      "capabilities": {"fetch_sources": false, "math_checks": false},
+      "evidence_policy": "autonomous"
+    },
+    {
+      "id": "holdout-subset-sum-10",
+      "question": "How many subsets of {1,2,3,4,5,6,7,8,9} have sum 10? Give one such subset and justify the exact count.",
+      "objective": "investigate",
+      "mode": "deep",
+      "sources": [],
+      "expected_obligations": ["Give the exact number.", "Give a witness subset.", "Justify exhaustive and nonduplicative counting."],
+      "forbidden_claims": ["Claiming a complete count without accounting for all subset sizes."],
+      "checks": [],
+      "capabilities": {"fetch_sources": false, "math_checks": false},
+      "evidence_policy": "autonomous"
+    },
+    {
+      "id": "holdout-rational-domain-3",
+      "question": "For real x where it is defined, simplify (x^2 - 9)/(x - 3). State the domain and explain whether cancellation changes it.",
+      "objective": "prove",
+      "mode": "deep",
+      "sources": [],
+      "expected_obligations": ["Give the simplification.", "State the original domain.", "Explain why the canceled expression does not restore the excluded input."],
+      "forbidden_claims": ["Claiming the original expression is defined at x=3."],
+      "checks": [],
+      "capabilities": {"fetch_sources": false, "math_checks": true},
+      "evidence_policy": "autonomous"
+    },
+    {
+      "id": "holdout-euler-boundary-16",
+      "question": "Is n^2+n+17 prime for every nonnegative integer n? Determine whether the universal claim is true and support the conclusion.",
+      "objective": "investigate",
+      "mode": "deep",
+      "sources": [],
+      "expected_obligations": ["Give a correct truth value.", "If false, verify a concrete counterexample.", "Do not generalize finite checking beyond its range."],
+      "forbidden_claims": ["Claiming universal primality from sampled values."],
+      "checks": [],
+      "capabilities": {"fetch_sources": false, "math_checks": false},
+      "evidence_policy": "autonomous"
+    },
+    {
+      "id": "holdout-policy-revision",
+      "question": "Which deadline should the team follow? Explain how the two records relate and what each one establishes.",
+      "objective": "investigate",
+      "mode": "deep",
+      "sources": [
+        {"id": "policy-notice-a", "kind": "synthetic_record", "text": "Notice A, issued 4 April: submissions close on 30 June."},
+        {"id": "policy-notice-b", "kind": "synthetic_record", "text": "Notice B, signed by the issuing office on 12 May: the submission deadline is extended to 15 July and replaces the date in Notice A."}
+      ],
+      "expected_obligations": ["Identify the current deadline.", "Explain that the older deadline was replaced.", "Attribute the revision to the signed later notice."],
+      "forbidden_claims": ["Presenting the deadlines as unresolved conflict.", "Inferring a year not given in the records."],
+      "checks": [],
+      "capabilities": {"fetch_sources": false, "math_checks": false},
+      "evidence_policy": "receipt_assisted"
+    },
+    {
+      "id": "holdout-square-root-proof",
+      "question": "A proof claims that sqrt(2) is rational: write sqrt(2)=a/b in lowest terms, square to get a^2=2b^2, and conclude that a and b are both even. Is the proof valid? Assess the conclusion and justify your answer.",
+      "objective": "prove",
+      "mode": "deep",
+      "sources": [],
+      "expected_obligations": ["Give a correct conclusion about the proof and claim.", "Explain what follows from a^2=2b^2.", "Identify the contradiction with lowest terms."],
+      "forbidden_claims": ["Accepting the claim that sqrt(2) is rational.", "Claiming both-even contradicts lowest terms without explaining why."],
+      "checks": [],
+      "capabilities": {"fetch_sources": false, "math_checks": false},
+      "evidence_policy": "autonomous"
+    },
+    {
+      "id": "holdout-inventory-ledger",
+      "question": "How many complete kits can be assembled, and how many batteries remain? Show the calculation and explain which constraint limits the kit count.",
+      "objective": "investigate",
+      "mode": "deep",
+      "sources": [
+        {"id": "inventory-boards", "kind": "synthetic_record", "text": "Inventory ledger: 29 boards are available."},
+        {"id": "inventory-batteries", "kind": "synthetic_record", "text": "Inventory ledger: 74 batteries are available."},
+        {"id": "kit-recipe", "kind": "synthetic_record", "text": "Assembly specification: each complete kit requires 3 boards and 8 batteries."}
+      ],
+      "expected_obligations": ["Compute the maximum complete kit count.", "Compute remaining batteries after assembling that many kits.", "Identify boards as the binding constraint."],
+      "forbidden_claims": ["Reporting fractional kits as complete.", "Subtracting resources for kits that cannot be assembled."],
+      "checks": [],
+      "capabilities": {"fetch_sources": false, "math_checks": false},
+      "evidence_policy": "receipt_assisted"
+    }
+  ]
+}

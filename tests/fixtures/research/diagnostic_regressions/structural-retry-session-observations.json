@@ -1,0 +1,763 @@
+{
+  "fixture_kind": "captured_session_marker_and_action_telemetry",
+  "multi_marker_action_count": 6,
+  "note": "Local stderr marker counts are supplemental and do not prove billing or remote execution counts. No marker IDs or unrelated log text are included.",
+  "per_action": [
+    {
+      "action_id": "a0001",
+      "action_role": "frame",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923/trials/induction-weighted-sum-01-pipeline/run/events/000005.json",
+        "reported_action_input_bytes": 2223,
+        "reported_action_output_bytes": 4776
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923/trials/induction-weighted-sum-01-pipeline/run/actions/a0001/stderr.log",
+      "stderr_sha256": "0e650ffdd1861e37e92a4bc9787e7beb8bee628b6fa3f433b5c258f28f363ee0"
+    },
+    {
+      "action_id": "a0002",
+      "action_role": "branch",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923/trials/induction-weighted-sum-01-pipeline/run/events/000008.json",
+        "reported_action_input_bytes": 4848,
+        "reported_action_output_bytes": 12778
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923/trials/induction-weighted-sum-01-pipeline/run/actions/a0002/stderr.log",
+      "stderr_sha256": "4591f5debc8ce999d8f4f0b1c496075a952942f1a1d305fb3d941edca600e323"
+    },
+    {
+      "action_id": "a0003",
+      "action_role": "branch",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923/trials/induction-weighted-sum-01-pipeline/run/events/000011.json",
+        "reported_action_input_bytes": 4540,
+        "reported_action_output_bytes": 12526
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923/trials/induction-weighted-sum-01-pipeline/run/actions/a0003/stderr.log",
+      "stderr_sha256": "e8449222fb713dd1615c350938f5a7336fdec8393fe045fbc798bf4e5e399011"
+    },
+    {
+      "action_id": "a0004",
+      "action_role": "synthesize",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923/trials/induction-weighted-sum-01-pipeline/run/events/000014.json",
+        "reported_action_input_bytes": 10050,
+        "reported_action_output_bytes": 17839
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923/trials/induction-weighted-sum-01-pipeline/run/actions/a0004/stderr.log",
+      "stderr_sha256": "7040704e29e8e93023a84255da3cc41667c537a6b2c1fd18adb18ff40db4703e"
+    },
+    {
+      "action_id": "a0005",
+      "action_role": "audit",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923/trials/induction-weighted-sum-01-pipeline/run/events/000017.json",
+        "reported_action_input_bytes": 5896,
+        "reported_action_output_bytes": 12294
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923/trials/induction-weighted-sum-01-pipeline/run/actions/a0005/stderr.log",
+      "stderr_sha256": "0d25087c061680d44c5fd5fc0f1d4891cb703f57f286111a5ef46da7aecd3220"
+    },
+    {
+      "action_id": "a0006",
+      "action_role": "revise",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923/trials/induction-weighted-sum-01-pipeline/run/events/000020.json",
+        "reported_action_input_bytes": 9679,
+        "reported_action_output_bytes": 19685
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923/trials/induction-weighted-sum-01-pipeline/run/actions/a0006/stderr.log",
+      "stderr_sha256": "a576c2b5fc4e8adcf056fb33d838733b36e590ae702e9f1b408ffd6e871a4ebe"
+    },
+    {
+      "action_id": "a0007",
+      "action_role": "audit",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923/trials/induction-weighted-sum-01-pipeline/run/events/000023.json",
+        "reported_action_input_bytes": 6919,
+        "reported_action_output_bytes": 13592
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923/trials/induction-weighted-sum-01-pipeline/run/actions/a0007/stderr.log",
+      "stderr_sha256": "fe5af08322a3c22b227b53fc9e2e399eb51f0729fac8ce61cc83a041817a8fe5"
+    },
+    {
+      "action_id": "a0001",
+      "action_role": "frame",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-algorithm-euclidean-gcd/trials/algorithm-euclidean-gcd-01-pipeline/run/events/000005.json",
+        "reported_action_input_bytes": 2309,
+        "reported_action_output_bytes": 4533
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-algorithm-euclidean-gcd/trials/algorithm-euclidean-gcd-01-pipeline/run/actions/a0001/stderr.log",
+      "stderr_sha256": "357b6f48060de52595bad8a7376201740e63c4cff312bf2b9c9f497c3223565f"
+    },
+    {
+      "action_id": "a0001",
+      "action_role": "frame",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-bijection-vandermonde/trials/bijection-vandermonde-01-pipeline/run/events/000005.json",
+        "reported_action_input_bytes": 2254,
+        "reported_action_output_bytes": 5732
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-bijection-vandermonde/trials/bijection-vandermonde-01-pipeline/run/actions/a0001/stderr.log",
+      "stderr_sha256": "e72bb40e977c8e7bd28f458bb24b3d12935a5d8ad7216ca2a613b05b56acdd66"
+    },
+    {
+      "action_id": "a0002",
+      "action_role": "branch",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-bijection-vandermonde/trials/bijection-vandermonde-01-pipeline/run/events/000008.json",
+        "reported_action_input_bytes": 5233,
+        "reported_action_output_bytes": 15421
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-bijection-vandermonde/trials/bijection-vandermonde-01-pipeline/run/actions/a0002/stderr.log",
+      "stderr_sha256": "34665329e88caf4384133954e59bbe46475c6c166b126b647b67d2ab955aa29e"
+    },
+    {
+      "action_id": "a0003",
+      "action_role": "branch",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-bijection-vandermonde/trials/bijection-vandermonde-01-pipeline/run/events/000011.json",
+        "reported_action_input_bytes": 4571,
+        "reported_action_output_bytes": 13947
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-bijection-vandermonde/trials/bijection-vandermonde-01-pipeline/run/actions/a0003/stderr.log",
+      "stderr_sha256": "5080374c5556961a00949c609fca10de57182adc00b4ce2c95e9b746aed6d8e1"
+    },
+    {
+      "action_id": "a0004",
+      "action_role": "synthesize",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-bijection-vandermonde/trials/bijection-vandermonde-01-pipeline/run/events/000014.json",
+        "reported_action_input_bytes": 12058,
+        "reported_action_output_bytes": 21714
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-bijection-vandermonde/trials/bijection-vandermonde-01-pipeline/run/actions/a0004/stderr.log",
+      "stderr_sha256": "030c06d02ee6eaad689f33967cc46188a2707ba41123e3e7d271bc0505ac9009"
+    },
+    {
+      "action_id": "a0005",
+      "action_role": "audit",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-bijection-vandermonde/trials/bijection-vandermonde-01-pipeline/run/events/000017.json",
+        "reported_action_input_bytes": 6850,
+        "reported_action_output_bytes": 29980
+      },
+      "multiple_session_markers_observed": true,
+      "session_id_marker_count": 2,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-bijection-vandermonde/trials/bijection-vandermonde-01-pipeline/run/actions/a0005/stderr.log",
+      "stderr_sha256": "3265ab5287b61525033c8f4ec4b5aa9ad8001b2b93f393fcafcd307c2703ecbd"
+    },
+    {
+      "action_id": "a0006",
+      "action_role": "revise",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-bijection-vandermonde/trials/bijection-vandermonde-01-pipeline/run/events/000020.json",
+        "reported_action_input_bytes": 11724,
+        "reported_action_output_bytes": 23063
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-bijection-vandermonde/trials/bijection-vandermonde-01-pipeline/run/actions/a0006/stderr.log",
+      "stderr_sha256": "5dfb7cb0026a64589a939c25ae718089a88662143e5f617081ef31427272caae"
+    },
+    {
+      "action_id": "a0007",
+      "action_role": "audit",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-bijection-vandermonde/trials/bijection-vandermonde-01-pipeline/run/events/000023.json",
+        "reported_action_input_bytes": 7606,
+        "reported_action_output_bytes": 16211
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-bijection-vandermonde/trials/bijection-vandermonde-01-pipeline/run/actions/a0007/stderr.log",
+      "stderr_sha256": "0acdccfba3df435cf0b84254af233f7db12ab2f9a38f3e814c58f3ba46317a27"
+    },
+    {
+      "action_id": "a0001",
+      "action_role": "frame",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-calculus-log-integral/trials/calculus-log-integral-01-pipeline/run/events/000005.json",
+        "reported_action_input_bytes": 2296,
+        "reported_action_output_bytes": 5102
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-calculus-log-integral/trials/calculus-log-integral-01-pipeline/run/actions/a0001/stderr.log",
+      "stderr_sha256": "9091dd7c542eb57b4b88063575fa714f0c9df4a7e84b48c9935b245f1a27bc34"
+    },
+    {
+      "action_id": "a0002",
+      "action_role": "branch",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-calculus-log-integral/trials/calculus-log-integral-01-pipeline/run/events/000008.json",
+        "reported_action_input_bytes": 5143,
+        "reported_action_output_bytes": 29326
+      },
+      "multiple_session_markers_observed": true,
+      "session_id_marker_count": 2,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-calculus-log-integral/trials/calculus-log-integral-01-pipeline/run/actions/a0002/stderr.log",
+      "stderr_sha256": "af6af34190e630a6e37ce64b5420f07168c1b7cd0fa214ac4f592cdc734ae1da"
+    },
+    {
+      "action_id": "a0003",
+      "action_role": "branch",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-calculus-log-integral/trials/calculus-log-integral-01-pipeline/run/events/000011.json",
+        "reported_action_input_bytes": 4613,
+        "reported_action_output_bytes": 13973
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-calculus-log-integral/trials/calculus-log-integral-01-pipeline/run/actions/a0003/stderr.log",
+      "stderr_sha256": "73b9c0e92b93ddbf2b9d693d91690410032428f42a3eb9743432ca1741ecddf1"
+    },
+    {
+      "action_id": "a0004",
+      "action_role": "synthesize",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-calculus-log-integral/trials/calculus-log-integral-01-pipeline/run/events/000014.json",
+        "reported_action_input_bytes": 12017,
+        "reported_action_output_bytes": 20971
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-calculus-log-integral/trials/calculus-log-integral-01-pipeline/run/actions/a0004/stderr.log",
+      "stderr_sha256": "d745de90166560678f687f49d87b7a0793796a824e80affe6835dc44c39c6479"
+    },
+    {
+      "action_id": "a0005",
+      "action_role": "audit",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-calculus-log-integral/trials/calculus-log-integral-01-pipeline/run/events/000017.json",
+        "reported_action_input_bytes": 6435,
+        "reported_action_output_bytes": 14077
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-calculus-log-integral/trials/calculus-log-integral-01-pipeline/run/actions/a0005/stderr.log",
+      "stderr_sha256": "ee8eb2cdf40f98fad3e1700530d7c3776ff6e3c8e4bcee029d0dd41ef97e0442"
+    },
+    {
+      "action_id": "a0006",
+      "action_role": "revise",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-calculus-log-integral/trials/calculus-log-integral-01-pipeline/run/events/000020.json",
+        "reported_action_input_bytes": 10830,
+        "reported_action_output_bytes": 20712
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-calculus-log-integral/trials/calculus-log-integral-01-pipeline/run/actions/a0006/stderr.log",
+      "stderr_sha256": "05bba112a4a72eeb93ad0f73fede594baac32d6ee1353e0ef231d885b6a17a3b"
+    },
+    {
+      "action_id": "a0007",
+      "action_role": "audit",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-calculus-log-integral/trials/calculus-log-integral-01-pipeline/run/events/000023.json",
+        "reported_action_input_bytes": 6865,
+        "reported_action_output_bytes": 13437
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-calculus-log-integral/trials/calculus-log-integral-01-pipeline/run/actions/a0007/stderr.log",
+      "stderr_sha256": "79bd69127dbe7c1a629c4bedaffe34df4caac87bf268fc821968a751e851a390"
+    },
+    {
+      "action_id": "a0001",
+      "action_role": "frame",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-counterexample-fixed-point/trials/counterexample-fixed-point-01-pipeline/run/events/000005.json",
+        "reported_action_input_bytes": 2299,
+        "reported_action_output_bytes": 4529
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-counterexample-fixed-point/trials/counterexample-fixed-point-01-pipeline/run/actions/a0001/stderr.log",
+      "stderr_sha256": "0f461a96f9c3194ae1169dcc4041e55c78365bbd63fd2db952814eb3283decd8"
+    },
+    {
+      "action_id": "a0001",
+      "action_role": "frame",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-extremal-noncut-vertices/trials/extremal-noncut-vertices-01-pipeline/run/events/000005.json",
+        "reported_action_input_bytes": 2363,
+        "reported_action_output_bytes": 6948
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-extremal-noncut-vertices/trials/extremal-noncut-vertices-01-pipeline/run/actions/a0001/stderr.log",
+      "stderr_sha256": "46f4976588c60b3d5f0741b2b9b196b0410c7a57aa26336b62e4f45d6c8e6905"
+    },
+    {
+      "action_id": "a0002",
+      "action_role": "branch",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-extremal-noncut-vertices/trials/extremal-noncut-vertices-01-pipeline/run/events/000008.json",
+        "reported_action_input_bytes": 5595,
+        "reported_action_output_bytes": 33799
+      },
+      "multiple_session_markers_observed": true,
+      "session_id_marker_count": 2,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-extremal-noncut-vertices/trials/extremal-noncut-vertices-01-pipeline/run/actions/a0002/stderr.log",
+      "stderr_sha256": "d1bb1bab64491bc9dea84730b9f6201d4b9d3293a9809597062cd0fb15942578"
+    },
+    {
+      "action_id": "a0003",
+      "action_role": "branch",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-extremal-noncut-vertices/trials/extremal-noncut-vertices-01-pipeline/run/events/000011.json",
+        "reported_action_input_bytes": 4680,
+        "reported_action_output_bytes": 16580
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-extremal-noncut-vertices/trials/extremal-noncut-vertices-01-pipeline/run/actions/a0003/stderr.log",
+      "stderr_sha256": "e1cc0f41c9b1517f56a987afba1847d290ca1db4627e989eca569ee3d9956174"
+    },
+    {
+      "action_id": "a0004",
+      "action_role": "synthesize",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-extremal-noncut-vertices/trials/extremal-noncut-vertices-01-pipeline/run/events/000014.json",
+        "reported_action_input_bytes": 13521,
+        "reported_action_output_bytes": 24687
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-extremal-noncut-vertices/trials/extremal-noncut-vertices-01-pipeline/run/actions/a0004/stderr.log",
+      "stderr_sha256": "6829ab517031e07905bb00e19ebbc08494c80d9746a86aa5c116cc5bdc3f965b"
+    },
+    {
+      "action_id": "a0005",
+      "action_role": "audit",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-extremal-noncut-vertices/trials/extremal-noncut-vertices-01-pipeline/run/events/000017.json",
+        "reported_action_input_bytes": 7711,
+        "reported_action_output_bytes": 16929
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-extremal-noncut-vertices/trials/extremal-noncut-vertices-01-pipeline/run/actions/a0005/stderr.log",
+      "stderr_sha256": "96409683987c3ba56c2e01f8be6fceddffacf597871ffaed5e78f4d09241d31e"
+    },
+    {
+      "action_id": "a0006",
+      "action_role": "revise",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-extremal-noncut-vertices/trials/extremal-noncut-vertices-01-pipeline/run/events/000020.json",
+        "reported_action_input_bytes": 12891,
+        "reported_action_output_bytes": 25896
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-extremal-noncut-vertices/trials/extremal-noncut-vertices-01-pipeline/run/actions/a0006/stderr.log",
+      "stderr_sha256": "7f3256cfc8a827cb9722aa72d5bd41b2d5000bd0d6fd00e428f6ebab3f18f9c6"
+    },
+    {
+      "action_id": "a0007",
+      "action_role": "audit",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-extremal-noncut-vertices/trials/extremal-noncut-vertices-01-pipeline/run/events/000023.json",
+        "reported_action_input_bytes": 8651,
+        "reported_action_output_bytes": 36013
+      },
+      "multiple_session_markers_observed": true,
+      "session_id_marker_count": 2,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-extremal-noncut-vertices/trials/extremal-noncut-vertices-01-pipeline/run/actions/a0007/stderr.log",
+      "stderr_sha256": "00df7534e0409b030ef203a456081780afe1dbe4d4e3700ff241deefcd749f35"
+    },
+    {
+      "action_id": "a0001",
+      "action_role": "frame",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-geometry-median-centroid/trials/geometry-median-centroid-01-pipeline/run/events/000005.json",
+        "reported_action_input_bytes": 2325,
+        "reported_action_output_bytes": 5156
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-geometry-median-centroid/trials/geometry-median-centroid-01-pipeline/run/actions/a0001/stderr.log",
+      "stderr_sha256": "61415c0676c38e04cdd36908b512b7dac2cb9604601bbfddcfb13a08cf072065"
+    },
+    {
+      "action_id": "a0002",
+      "action_role": "branch",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-geometry-median-centroid/trials/geometry-median-centroid-01-pipeline/run/events/000008.json",
+        "reported_action_input_bytes": 5076,
+        "reported_action_output_bytes": 14554
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-geometry-median-centroid/trials/geometry-median-centroid-01-pipeline/run/actions/a0002/stderr.log",
+      "stderr_sha256": "efa5e2d22ee90d92c7e0e7da65c8b9b7159f93724dcb954267019162b0c935bf"
+    },
+    {
+      "action_id": "a0003",
+      "action_role": "branch",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-geometry-median-centroid/trials/geometry-median-centroid-01-pipeline/run/events/000011.json",
+        "reported_action_input_bytes": 4642,
+        "reported_action_output_bytes": 14054
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-geometry-median-centroid/trials/geometry-median-centroid-01-pipeline/run/actions/a0003/stderr.log",
+      "stderr_sha256": "fed1bc2173c75f481545d708e002bebdeea41177c22798a17f93664c4a52a7f8"
+    },
+    {
+      "action_id": "a0004",
+      "action_role": "synthesize",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-geometry-median-centroid/trials/geometry-median-centroid-01-pipeline/run/events/000014.json",
+        "reported_action_input_bytes": 11786,
+        "reported_action_output_bytes": 20846
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-geometry-median-centroid/trials/geometry-median-centroid-01-pipeline/run/actions/a0004/stderr.log",
+      "stderr_sha256": "66fdac486ff1a72ee206b4915daa5e06903914614aa4c9b3648380afc8979101"
+    },
+    {
+      "action_id": "a0005",
+      "action_role": "audit",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-geometry-median-centroid/trials/geometry-median-centroid-01-pipeline/run/events/000017.json",
+        "reported_action_input_bytes": 6620,
+        "reported_action_output_bytes": 16300
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-geometry-median-centroid/trials/geometry-median-centroid-01-pipeline/run/actions/a0005/stderr.log",
+      "stderr_sha256": "197221eb874c1d358d1216b62f18546a4a268a70c81119955e1f4eb7a93009ce"
+    },
+    {
+      "action_id": "a0006",
+      "action_role": "revise",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-geometry-median-centroid/trials/geometry-median-centroid-01-pipeline/run/events/000020.json",
+        "reported_action_input_bytes": 12031,
+        "reported_action_output_bytes": 21747
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-geometry-median-centroid/trials/geometry-median-centroid-01-pipeline/run/actions/a0006/stderr.log",
+      "stderr_sha256": "7e8696f13a74bd4d4511707cdd4cfe4c778804370489a8a042a8fe0b376d31bb"
+    },
+    {
+      "action_id": "a0007",
+      "action_role": "audit",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-geometry-median-centroid/trials/geometry-median-centroid-01-pipeline/run/events/000023.json",
+        "reported_action_input_bytes": 6863,
+        "reported_action_output_bytes": 15251
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-geometry-median-centroid/trials/geometry-median-centroid-01-pipeline/run/actions/a0007/stderr.log",
+      "stderr_sha256": "ed4ae7693efe4c87169fe5ba80dd82b92828454c6dfcec598f940a40419635b1"
+    },
+    {
+      "action_id": "a0001",
+      "action_role": "frame",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-linear-algebra-rank-one/trials/linear-algebra-rank-one-01-pipeline/run/events/000005.json",
+        "reported_action_input_bytes": 2264,
+        "reported_action_output_bytes": 5221
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-linear-algebra-rank-one/trials/linear-algebra-rank-one-01-pipeline/run/actions/a0001/stderr.log",
+      "stderr_sha256": "4a1dae343321292d6dbc250792b2c96edbbb746250ea4c279e553b48097a4da0"
+    },
+    {
+      "action_id": "a0002",
+      "action_role": "branch",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-linear-algebra-rank-one/trials/linear-algebra-rank-one-01-pipeline/run/events/000008.json",
+        "reported_action_input_bytes": 5021,
+        "reported_action_output_bytes": 14481
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-linear-algebra-rank-one/trials/linear-algebra-rank-one-01-pipeline/run/actions/a0002/stderr.log",
+      "stderr_sha256": "6c172b4098466baa922b49e0b4daa5fe98773dc3d7fd0d7c8696c80338d71f4a"
+    },
+    {
+      "action_id": "a0003",
+      "action_role": "branch",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-linear-algebra-rank-one/trials/linear-algebra-rank-one-01-pipeline/run/events/000011.json",
+        "reported_action_input_bytes": 4581,
+        "reported_action_output_bytes": 14059
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-linear-algebra-rank-one/trials/linear-algebra-rank-one-01-pipeline/run/actions/a0003/stderr.log",
+      "stderr_sha256": "d6f56490d578b00a69d8456d6923db9cc755035e64ee2579f4fcff25edb5ebe3"
+    },
+    {
+      "action_id": "a0004",
+      "action_role": "synthesize",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-linear-algebra-rank-one/trials/linear-algebra-rank-one-01-pipeline/run/events/000014.json",
+        "reported_action_input_bytes": 11751,
+        "reported_action_output_bytes": 21113
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-linear-algebra-rank-one/trials/linear-algebra-rank-one-01-pipeline/run/actions/a0004/stderr.log",
+      "stderr_sha256": "24e9e3a38500493f46f1225cdbb21d983491752001182cc8d8234925d657da9c"
+    },
+    {
+      "action_id": "a0005",
+      "action_role": "audit",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-linear-algebra-rank-one/trials/linear-algebra-rank-one-01-pipeline/run/events/000017.json",
+        "reported_action_input_bytes": 6711,
+        "reported_action_output_bytes": 12696
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-linear-algebra-rank-one/trials/linear-algebra-rank-one-01-pipeline/run/actions/a0005/stderr.log",
+      "stderr_sha256": "98ac67ff1c68eda756a2dd36d9fc8a8ad494483762b34271f2d3b406a160fd0c"
+    },
+    {
+      "action_id": "a0006",
+      "action_role": "revise",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-linear-algebra-rank-one/trials/linear-algebra-rank-one-01-pipeline/run/events/000020.json",
+        "reported_action_input_bytes": 10275,
+        "reported_action_output_bytes": 20720
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-linear-algebra-rank-one/trials/linear-algebra-rank-one-01-pipeline/run/actions/a0006/stderr.log",
+      "stderr_sha256": "7b785ce96031d4e43d16d9a0b1613184a2d9bb79e43db7f1983eaf4b2f45d618"
+    },
+    {
+      "action_id": "a0007",
+      "action_role": "audit",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-linear-algebra-rank-one/trials/linear-algebra-rank-one-01-pipeline/run/events/000023.json",
+        "reported_action_input_bytes": 7273,
+        "reported_action_output_bytes": 13531
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-linear-algebra-rank-one/trials/linear-algebra-rank-one-01-pipeline/run/actions/a0007/stderr.log",
+      "stderr_sha256": "ad271fe86d6a8a181e77d27a2951cfc54d3c004b68eec1b7588abde090a00022"
+    },
+    {
+      "action_id": "a0001",
+      "action_role": "frame",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-number-theory-mod24/trials/number-theory-mod24-01-pipeline/run/events/000005.json",
+        "reported_action_input_bytes": 2230,
+        "reported_action_output_bytes": 5152
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-number-theory-mod24/trials/number-theory-mod24-01-pipeline/run/actions/a0001/stderr.log",
+      "stderr_sha256": "57525886868ec2adfe14a4e1361976cd53d02fec08b0afbc031e900317aeea3a"
+    },
+    {
+      "action_id": "a0002",
+      "action_role": "branch",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-number-theory-mod24/trials/number-theory-mod24-01-pipeline/run/events/000008.json",
+        "reported_action_input_bytes": 4911,
+        "reported_action_output_bytes": 12307
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-number-theory-mod24/trials/number-theory-mod24-01-pipeline/run/actions/a0002/stderr.log",
+      "stderr_sha256": "1ecd92a570ef1b54b9d0e1e04c33d88f55d5114b08e673458549df799f73e371"
+    },
+    {
+      "action_id": "a0003",
+      "action_role": "branch",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-number-theory-mod24/trials/number-theory-mod24-01-pipeline/run/events/000011.json",
+        "reported_action_input_bytes": 4547,
+        "reported_action_output_bytes": 13129
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-number-theory-mod24/trials/number-theory-mod24-01-pipeline/run/actions/a0003/stderr.log",
+      "stderr_sha256": "dfa976a65aca5068a93515dc7a3b60109a30e2ff3208d26b64b3f40214b0950a"
+    },
+    {
+      "action_id": "a0004",
+      "action_role": "synthesize",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-number-theory-mod24/trials/number-theory-mod24-01-pipeline/run/events/000014.json",
+        "reported_action_input_bytes": 10139,
+        "reported_action_output_bytes": 18160
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-number-theory-mod24/trials/number-theory-mod24-01-pipeline/run/actions/a0004/stderr.log",
+      "stderr_sha256": "8c47931c24a0dd9485254baece1b9cea4871aebb88aabbce222a78506c779df4"
+    },
+    {
+      "action_id": "a0005",
+      "action_role": "audit",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-number-theory-mod24/trials/number-theory-mod24-01-pipeline/run/events/000017.json",
+        "reported_action_input_bytes": 5783,
+        "reported_action_output_bytes": 12435
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-number-theory-mod24/trials/number-theory-mod24-01-pipeline/run/actions/a0005/stderr.log",
+      "stderr_sha256": "1b9ed8ae76935f6575f112f50452b281812b92b26d605eb006ccc91f8f13cc71"
+    },
+    {
+      "action_id": "a0006",
+      "action_role": "revise",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-number-theory-mod24/trials/number-theory-mod24-01-pipeline/run/events/000020.json",
+        "reported_action_input_bytes": 9685,
+        "reported_action_output_bytes": 17812
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-number-theory-mod24/trials/number-theory-mod24-01-pipeline/run/actions/a0006/stderr.log",
+      "stderr_sha256": "8070713a15e979c95eb37c45cbbfbae24d292cbe178c294738c1208f34b1714a"
+    },
+    {
+      "action_id": "a0007",
+      "action_role": "audit",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-number-theory-mod24/trials/number-theory-mod24-01-pipeline/run/events/000023.json",
+        "reported_action_input_bytes": 5904,
+        "reported_action_output_bytes": 12421
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-number-theory-mod24/trials/number-theory-mod24-01-pipeline/run/actions/a0007/stderr.log",
+      "stderr_sha256": "93d01fdd53cc10e7f5acc09a9ba25ece7abb7abe46bcafe02ec6a92bc4cc5201"
+    },
+    {
+      "action_id": "a0001",
+      "action_role": "frame",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-probability-overlap-hh/trials/probability-overlap-hh-01-pipeline/run/events/000005.json",
+        "reported_action_input_bytes": 2775,
+        "reported_action_output_bytes": 6898
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-probability-overlap-hh/trials/probability-overlap-hh-01-pipeline/run/actions/a0001/stderr.log",
+      "stderr_sha256": "e499b7fadfa7d238d5993d7201cb39592206f33837bcce7abd83616b02a9686d"
+    },
+    {
+      "action_id": "a0002",
+      "action_role": "branch",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-probability-overlap-hh/trials/probability-overlap-hh-01-pipeline/run/events/000008.json",
+        "reported_action_input_bytes": 5929,
+        "reported_action_output_bytes": 39048
+      },
+      "multiple_session_markers_observed": true,
+      "session_id_marker_count": 2,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-probability-overlap-hh/trials/probability-overlap-hh-01-pipeline/run/actions/a0002/stderr.log",
+      "stderr_sha256": "7c6d76083299e15407391d540fd6036d05e044dff656f4267c220676787eced4"
+    },
+    {
+      "action_id": "a0003",
+      "action_role": "branch",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-probability-overlap-hh/trials/probability-overlap-hh-01-pipeline/run/events/000011.json",
+        "reported_action_input_bytes": 5092,
+        "reported_action_output_bytes": 16348
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-probability-overlap-hh/trials/probability-overlap-hh-01-pipeline/run/actions/a0003/stderr.log",
+      "stderr_sha256": "31942523e398d40279575d42317658aff224fd926872ba639aeb816e7e9f7bcd"
+    },
+    {
+      "action_id": "a0004",
+      "action_role": "synthesize",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-probability-overlap-hh/trials/probability-overlap-hh-01-pipeline/run/events/000014.json",
+        "reported_action_input_bytes": 15218,
+        "reported_action_output_bytes": 26342
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-probability-overlap-hh/trials/probability-overlap-hh-01-pipeline/run/actions/a0004/stderr.log",
+      "stderr_sha256": "5614bbedc58b6b8986c0b19fb3f53c7c83b85dc3dbe4427d00dc8522cfff1d44"
+    },
+    {
+      "action_id": "a0005",
+      "action_role": "audit",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-probability-overlap-hh/trials/probability-overlap-hh-01-pipeline/run/events/000017.json",
+        "reported_action_input_bytes": 7998,
+        "reported_action_output_bytes": 17602
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-probability-overlap-hh/trials/probability-overlap-hh-01-pipeline/run/actions/a0005/stderr.log",
+      "stderr_sha256": "46758247e39f35cb4102d03ec25ce2990da7634d03d9e1db91558f63613b5b3b"
+    },
+    {
+      "action_id": "a0006",
+      "action_role": "revise",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-probability-overlap-hh/trials/probability-overlap-hh-01-pipeline/run/events/000020.json",
+        "reported_action_input_bytes": 13267,
+        "reported_action_output_bytes": 25524
+      },
+      "multiple_session_markers_observed": false,
+      "session_id_marker_count": 1,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-probability-overlap-hh/trials/probability-overlap-hh-01-pipeline/run/actions/a0006/stderr.log",
+      "stderr_sha256": "5fac206c860196eab8e988959604e01ccaf68ef70b1b68b00846180593c5b439"
+    },
+    {
+      "action_id": "a0007",
+      "action_role": "audit",
+      "event_telemetry": {
+        "action_finish_event": "runs/ten-styles-live-approved-20260923-probability-overlap-hh/trials/probability-overlap-hh-01-pipeline/run/events/000023.json",
+        "reported_action_input_bytes": 8691,
+        "reported_action_output_bytes": 36225
+      },
+      "multiple_session_markers_observed": true,
+      "session_id_marker_count": 2,
+      "source_stderr": "runs/ten-styles-live-approved-20260923-probability-overlap-hh/trials/probability-overlap-hh-01-pipeline/run/actions/a0007/stderr.log",
+      "stderr_sha256": "e124e6db3b1fb7a9dc325e16e19a10e07c331d5055c7522d2ece1e060008526c"
+    }
+  ],
+  "synthetic": false,
+  "total_session_markers": 64
+}

@@ -70,3 +70,14 @@ def parse_provider_observation(stderr: bytes | str) -> dict[str, str | None]:
             values["effort"].append(match.group(1))
     return {key: items[0] if items and len(set(items)) == 1 else None
             for key, items in values.items()}
+
+
+def count_session_id_markers(stderr: bytes | str) -> int:
+    """Count supplemental local session markers without retaining provider IDs."""
+    if isinstance(stderr, bytes):
+        text = stderr.decode("utf-8", "replace")
+    elif isinstance(stderr, str):
+        text = stderr
+    else:
+        return 0
+    return len(re.findall(r"(?im)^\s*session\s+id\s*:", text))

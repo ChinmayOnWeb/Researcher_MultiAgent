@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import math
+import re
 import tempfile
 import time
 from pathlib import Path
@@ -17,9 +18,9 @@ from mathresearch.research.broker import run_broker
 from mathresearch.research.contracts import validate_audit_for_draft, validate_result
 from mathresearch.research.events import ResearchEvent, ResearchSnapshot, canonical_json_bytes
 from mathresearch.research.provenance import check_provenance
-from mathresearch.research.prompts import build_packet, build_prompt
+from mathresearch.research.prompts import build_packet, build_prompt, structural_repair_prompt
 from mathresearch.research.provider import (check_provider_observation, create_research_provider,
-    parse_provider_observation, provider_configuration)
+    count_session_id_markers, parse_provider_observation, provider_configuration)
 from mathresearch.research.reporting import render_log, render_report
 from mathresearch.research.routing import Decision, assess_latest, next_decision
 from mathresearch.research.store import LockedResearchRun, initialize_research, open_research_run
@@ -27,6 +28,38 @@ from mathresearch.worker_process import execute_worker
 
 
 Now = Callable[[], datetime]
+
+
+def _structural_diff(before: Any, after: Any, path: str = "") -> list[dict[str, Any]]:
+    """Return a JSON-path diff, including additions and removals."""
+    missing = {"$missing": True}
+    if isinstance(before, Mapping) and isinstance(after, Mapping):
+        changes: list[dict[str, Any]] = []
+        for key in sorted(set(before) | set(after)):
+            child = path + "/" + str(key).replace("~", "~0").replace("/", "~1")
+            if key not in before:
+                changes.append({"path": child, "before": missing, "after": after[key]})
+            elif key not in after:
+                changes.append({"path": child, "before": before[key], "after": missing})
+            else:
+                changes.extend(_structural_diff(before[key], after[key], child))
+        return changes
+    if isinstance(before, list) and isinstance(after, list):
+        changes = []
+        for index in range(max(len(before), len(after))):
+            child = f"{path}/{index}"
+            if index >= len(before):
+                changes.append({"path": child, "before": missing, "after": after[index]})
+            elif index >= len(after):
+                changes.append({"path": child, "before": before[index], "after": missing})
+            else:
+                changes.extend(_structural_diff(before[index], after[index], child))
+        return changes
+    if before != after:
+        return [{"path": path or "/", "before": before, "after": after}]
+    return []
+
+
 class ProviderFactory(Protocol):
     def __call__(self, request: Any, *, recorded_config: Mapping[str, Any] | None) -> Adapter: ...
 FaultHook = Callable[[str, ResearchSnapshot], None]
@@ -53,7 +86,7 @@ def _remaining(snapshot: ResearchSnapshot, now: Now) -> int:
 def _event(run: LockedResearchRun, kind: str, body: Mapping[str, Any], now: Now,
            *, occurred_at: str | None = None,
            after_event_persisted: Callable[[ResearchSnapshot], None] | None = None) -> ResearchSnapshot:
-    item = ResearchEvent.from_json({"schema_version": 3, "record_type": "research_event",
+    item = ResearchEvent.from_json({"schema_version": 4, "record_type": "research_event",
         "sequence": run.snapshot.sequence + 1, "event_type": kind,
         "run_id": run.snapshot.request.run_id, "occurred_at": occurred_at or _utc(now), "body": dict(body)})
     return run.append(item, after_event_persisted=after_event_persisted)
@@ -94,7 +127,7 @@ def _finalize(run: LockedResearchRun, decision: Decision, status: str,
                                     decision.assessment or _assessment_for_stop(run.snapshot, reason))
     recorded = any(item.get("decision_id") == decision.decision_id for item in run.snapshot.decisions)
     if not recorded:
-        run.append(ResearchEvent.from_json({"schema_version": 3, "record_type": "research_event",
+        run.append(ResearchEvent.from_json({"schema_version": 4, "record_type": "research_event",
             "sequence": run.snapshot.sequence + 1, "event_type": "decision_recorded",
             "run_id": run.snapshot.request.run_id, "occurred_at": _utc(now),
             "body": _decision_body(decision)}))
@@ -119,7 +152,7 @@ def _open_gate(run: LockedResearchRun, decision: Decision, now: Now,
             "questions": list(decision.gate["questions"]),
             "allowed_response": list(decision.gate["allowed_response"])}
     resume_token = hashlib.sha256(body["gate_id"].encode("utf-8") + canonical_json_bytes(body)).hexdigest()
-    run.append(ResearchEvent.from_json({"schema_version": 3, "record_type": "research_event",
+    run.append(ResearchEvent.from_json({"schema_version": 4, "record_type": "research_event",
         "sequence": run.snapshot.sequence + 1, "event_type": "gate_opened",
         "run_id": run.snapshot.request.run_id, "occurred_at": _utc(now),
         "body": body | {"resume_token": resume_token}}))
@@ -191,6 +224,117 @@ def _telemetry(duration_ms: int, input_bytes: int, output_bytes: int,
             "output_tokens": None, "reasoning_tokens": None, "cost_usd": None}
 
 
+def _execute_provider_attempt(run: LockedResearchRun, action: Mapping[str, Any], adapter: Adapter,
+                              prompt: str, schema: Mapping[str, Any], scratch_parent: Path,
+                              now: Now, monotonic: Callable[[], float], fault_hook: FaultHook | None,
+                              *, parent_attempt_id: str | None = None,
+                              retry_reason: str | None = None,
+                              rejected_payload: Mapping[str, Any] | None = None,
+                              validation_errors: Mapping[str, Any] | None = None) -> tuple[WorkerOutput, dict[str, Any], str, int]:
+    snapshot = run.snapshot
+    attempt_number = sum(1 for item in snapshot.attempts.values()
+                         if item["action_id"] == action["id"]) + 1
+    attempt_id = f"{action['id']}-a{attempt_number:02d}"
+    prompt_bytes, schema_bytes = prompt.encode("utf-8"), canonical_json_bytes(schema)
+    input_bytes = len(prompt_bytes) + len(schema_bytes)
+    remaining = min(_remaining(snapshot, now), snapshot.request.budgets["per_call_seconds"])
+    if snapshot.model_calls_used >= snapshot.request.budgets["max_model_calls"]:
+        return WorkerOutput("launch_failed", None, b"", b"", None,
+            "provider_attempt_budget_exhausted"), {"model": None, "effort": None}, attempt_id, 0
+    if remaining <= 0:
+        return WorkerOutput("launch_failed", None, b"", b"", None,
+            "deadline_before_launch"), {"model": None, "effort": None}, attempt_id, 0
+    if input_bytes > snapshot.request.budgets["max_input_bytes"]:
+        return WorkerOutput("launch_failed", None, b"", b"", None,
+            "attempt_input_exceeds_max_input_bytes"), {"model": None, "effort": None}, attempt_id, input_bytes
+    snapshot = _event(run, "provider_attempt_intended", {
+        "attempt_id": attempt_id, "action_id": action["id"],
+        "parent_attempt_id": parent_attempt_id,
+        "attempt_kind": "initial" if parent_attempt_id is None else "structural_repair",
+        "retry_reason": retry_reason,
+        "prompt_version": (action["payload"]["prompt_version"] if parent_attempt_id is None
+                            else "structural-repair-v3"),
+        "prompt_sha256": hashlib.sha256(prompt_bytes).hexdigest(),
+        "schema_sha256": hashlib.sha256(schema_bytes).hexdigest(),
+        "input_bytes": input_bytes}, now)
+    if fault_hook: fault_hook("after_provider_attempt_intent", snapshot)
+    before = monotonic()
+    try:
+        with tempfile.TemporaryDirectory(prefix="research-attempt-", dir=str(scratch_parent),
+                                          ignore_cleanup_errors=True) as scratch_name:
+            raw = execute_worker(adapter, WorkerInput(
+                stage=f"{action['role']}:{action.get('branch') or ''}",
+                prompt=prompt, output_schema=schema), scratch=Path(scratch_name),
+                timeout_seconds=remaining)
+    except (OSError, ValueError, TypeError) as exc:
+        raw = WorkerOutput("launch_failed", None, b"", b"", None, str(exc)[:4000])
+    observed = parse_provider_observation(raw.stderr)
+    mismatch = check_provider_observation(snapshot.request, observed)
+    output = raw
+    if mismatch is not None:
+        output = WorkerOutput("protocol_error", raw.exit_code, raw.stdout, raw.stderr, None, mismatch)
+    elif raw.outcome == "succeeded" and raw.payload is not None:
+        try:
+            packet = json.loads(snapshot.intent_packets[action["id"]])
+            result_version = action["payload"]["prompt_version"]
+            if (action["role"] == "audit" and isinstance(packet.get("inputs", {}).get("draft"), Mapping)
+                    and packet["inputs"]["draft"].get("claims") and
+                    "basis" in packet["inputs"]["draft"]["claims"][0]):
+                result_version = "research-v3"
+            checked_result = validate_result(action["role"], raw.payload,
+                prompt_version=result_version)
+            if parent_attempt_id is not None and action["role"] in {"answer", "branch", "synthesize", "revise"}:
+                prior_log = list((rejected_payload or {}).get("change_log", []))
+                if not checked_result["change_log"] or checked_result["change_log"] == prior_log:
+                    raise ValidationError("change_log", "structural repair must record its change explanation")
+            if action["role"] == "audit":
+                validate_audit_for_draft(raw.payload, packet["inputs"]["draft"],
+                    prompt_version=result_version)
+            if action["role"] in {"answer", "branch", "synthesize", "revise"}:
+                issues = check_provenance(raw.payload, packet["sources"], packet["tool_results"])
+                if issues: raise ValidationError("provenance", "; ".join(issues))
+        except ValidationError as exc:
+            output = WorkerOutput("protocol_error", raw.exit_code, raw.stdout, raw.stderr,
+                                  raw.payload, f"structural validation failed: {exc}",
+                                  {"field": exc.field, "message": exc.message, **exc.details})
+    combined = " ".join(str(value or "") for value in (
+        output.error, output.stderr.decode("utf-8", "replace"),
+        output.stdout.decode("utf-8", "replace"))).lower()
+    if re.search(r"usage limit|rate.?limit|too many requests|quota exceeded", combined):
+        failure_class = "provider_usage_limit"
+    elif output.outcome == "protocol_error":
+        failure_class = "protocol_error"
+    elif output.outcome == "timed_out":
+        failure_class = "timeout"
+    elif output.outcome not in {"succeeded", "launch_failed"}:
+        failure_class = "provider_failure"
+    else:
+        failure_class = None
+    stdout_digest = run.write_attempt_capture(action["id"], attempt_id, "stdout.bin", raw.stdout)
+    stderr_digest = run.write_attempt_capture(action["id"], attempt_id, "stderr.log", raw.stderr)
+    telemetry = _telemetry(int((monotonic() - before) * 1000), input_bytes,
+                           len(raw.stdout) + len(raw.stderr), observed)
+    repair_review = None
+    if rejected_payload is not None:
+        corrected = None if raw.payload is None else dict(raw.payload)
+        repair_review = {"rejected_payload": dict(rejected_payload),
+                         "corrected_payload": corrected,
+                         "validation_errors": dict(validation_errors or {}),
+                         "change_explanation": (next(iter(reversed(corrected.get("change_log", []))), None)
+                             if corrected and isinstance(corrected.get("change_log"), list) else None)
+                             or "Structural correction recorded in the JSON-path diff.",
+                         "diff": [] if corrected is None else _structural_diff(rejected_payload, corrected)}
+    completed = _event(run, "provider_attempt_finished", {
+        "attempt_id": attempt_id, "outcome": output.outcome,
+        "exit_code": output.exit_code, "stdout_sha256": stdout_digest,
+        "stderr_sha256": stderr_digest, "error": output.error,
+        "telemetry": telemetry, "failure_class": failure_class,
+        "session_id_marker_count": count_session_id_markers(raw.stderr),
+        "repair_review": repair_review}, now)
+    if fault_hook: fault_hook("after_provider_attempt_finished", completed)
+    return output, observed, attempt_id, input_bytes
+
+
 def _execute_action(run: LockedResearchRun, action: Mapping[str, Any], adapter: Adapter | None,
                     packet: Mapping[str, Any], scratch_parent: Path, remaining: int,
                     now: Now, monotonic: Callable[[], float], fault_hook: FaultHook | None) -> ResearchSnapshot:
@@ -215,57 +359,27 @@ def _execute_action(run: LockedResearchRun, action: Mapping[str, Any], adapter: 
                 if action["kind"] == "worker":
                     if adapter is None: raise ValueError("worker launch requires a configured provider")
                     prompt = build_prompt(action["role"], packet)
-                    output = execute_worker(adapter, WorkerInput(
-                        stage=f"{action['role']}:{action.get('branch') or ''}", prompt=prompt,
-                        output_schema=packet["output_schema"]), scratch=scratch,
-                        timeout_seconds=remaining)
-                    observed = parse_provider_observation(output.stderr)
-                    mismatch = check_provider_observation(snapshot.request, observed)
-                    if mismatch is not None:
-                        output = WorkerOutput("protocol_error", output.exit_code, output.stdout,
-                            output.stderr, None, mismatch)
-                    elif output.outcome == "succeeded" and output.payload is not None:
-                        try:
-                            validate_result(action["role"], output.payload)
-                            if action["role"] == "audit":
-                                validate_audit_for_draft(output.payload, packet["inputs"]["draft"])
-                            if action["role"] in {"answer", "branch", "synthesize", "revise"}:
-                                issues = check_provenance(output.payload, packet["sources"], packet["tool_results"])
-                                if issues:
-                                    raise ValidationError("provenance", "; ".join(issues))
-                        except ValidationError as validation_error:
-                            repair_prompt = (prompt + "\n\nSTRUCTURAL REPAIR REQUIRED: your previous JSON failed validation: "
-                                + str(validation_error) + " Return the complete corrected JSON. Every depends_on entry must exactly match an ID in the same output array; use [] when there is no exact dependency. Do not add commentary.")
-                            first_stdout, first_stderr = output.stdout, output.stderr
-                            repair_remaining = max(1, min(_remaining(snapshot, now), snapshot.request.budgets["per_call_seconds"]))
-                            with tempfile.TemporaryDirectory(prefix="research-repair-", dir=str(scratch_parent),
-                                                              ignore_cleanup_errors=True) as repair_name:
-                                repaired = execute_worker(adapter, WorkerInput(
-                                    stage=f"{action['role']}:{action.get('branch') or ''}:repair",
-                                    prompt=repair_prompt, output_schema=packet["output_schema"]),
-                                    scratch=Path(repair_name), timeout_seconds=repair_remaining)
-                            repaired_stdout = first_stdout + b"\n[structural-repair]\n" + repaired.stdout
-                            repaired_stderr = first_stderr + b"\n[structural-repair]\n" + repaired.stderr
-                            if repaired.outcome == "succeeded" and repaired.payload is not None:
-                                try:
-                                    validate_result(action["role"], repaired.payload)
-                                    if action["role"] == "audit":
-                                        validate_audit_for_draft(repaired.payload, packet["inputs"]["draft"])
-                                    if action["role"] in {"answer", "branch", "synthesize", "revise"}:
-                                        issues = check_provenance(repaired.payload, packet["sources"], packet["tool_results"])
-                                        if issues:
-                                            raise ValidationError("provenance", "; ".join(issues))
-                                    output = WorkerOutput(repaired.outcome, repaired.exit_code,
-                                        repaired_stdout, repaired_stderr, repaired.payload, None)
-                                except ValidationError as second_error:
-                                    output = WorkerOutput("protocol_error", repaired.exit_code,
-                                        repaired_stdout, repaired_stderr, None,
-                                        f"structural validation failed after repair: {second_error}")
-                            else:
-                                output = WorkerOutput("protocol_error", repaired.exit_code,
-                                    repaired_stdout, repaired_stderr, None,
-                                    f"structural repair provider outcome: {repaired.error or repaired.outcome}")
-                            observed = parse_provider_observation(repaired.stderr)
+                    output, observed, attempt_id, input_bytes = _execute_provider_attempt(
+                        run, action, adapter, prompt, packet["output_schema"], scratch_parent,
+                        now, monotonic, fault_hook)
+                    attempts_input_bytes = input_bytes
+                    if output.outcome == "protocol_error" and output.error and output.payload is not None:
+                        repair_prompt = structural_repair_prompt(prompt, output.payload,
+                            output.validation_details or {"message": output.error},
+                            require_change_log=action["role"] in {"answer", "branch", "synthesize", "revise"})
+                        first = output
+                        repaired, observed, _, repair_input_bytes = _execute_provider_attempt(
+                            run, action, adapter, repair_prompt, packet["output_schema"],
+                            scratch_parent, now, monotonic, fault_hook,
+                            parent_attempt_id=attempt_id, retry_reason=first.error,
+                            rejected_payload=first.payload,
+                            validation_errors=first.validation_details)
+                        attempts_input_bytes += repair_input_bytes
+                        output = WorkerOutput(repaired.outcome,
+                            repaired.exit_code, first.stdout + b"\n[structural-repair]\n" + repaired.stdout,
+                            first.stderr + b"\n[structural-repair]\n" + repaired.stderr,
+                            repaired.payload if repaired.outcome == "succeeded" else None,
+                            repaired.error)
                 else:
                     output, _ = _tool_result(snapshot, action, scratch, remaining)
                     observed = {"model": None, "effort": None}
@@ -277,7 +391,8 @@ def _execute_action(run: LockedResearchRun, action: Mapping[str, Any], adapter: 
     if fault_hook: fault_hook("after_stdout_capture", run.snapshot)
     stderr_digest = run.write_capture(action["id"], "stderr.log", output.stderr)
     if fault_hook: fault_hook("after_stderr_capture", run.snapshot)
-    telemetry = _telemetry(duration_ms, len(packet_bytes), len(output.stdout) + len(output.stderr), observed)
+    telemetry = _telemetry(duration_ms, locals().get("attempts_input_bytes", len(packet_bytes)),
+                           len(output.stdout) + len(output.stderr), observed)
     event_status = output.outcome if output.outcome in {"succeeded", "failed", "timed_out", "cancelled", "launch_failed", "protocol_error"} else "failed"
     finished = _event(run, "action_finished", {"action_id": action["id"],
         "outcome": event_status, "exit_code": output.exit_code,
@@ -300,11 +415,25 @@ def run_research(run_dir: Path, *, provider_factory: ProviderFactory | None = No
     scratch_parent.mkdir(parents=True, exist_ok=True)
     with open_research_run(Path(run_dir)) as run:
         adapter: Adapter | None = None
+        pending_action_id = run.snapshot.pending_action_id
+        pending_action_is_legacy = pending_action_id is not None and run.snapshot.actions[pending_action_id]["kind"] == "worker" and any(
+            item.event_type == "action_intended" and item.body["action_id"] == pending_action_id
+            and item.schema_version == 3 for item in run.events)
+        pending_action_has_attempt_result = pending_action_id is not None and any(
+            attempt.get("action_id") == pending_action_id for attempt in run.snapshot.attempts.values())
+        if (run.snapshot.status not in {"complete", "incomplete", "blocked", "budget_exhausted"} and
+                (run.snapshot.pending_attempt_id is not None or pending_action_is_legacy or
+                 pending_action_has_attempt_result)):
+            reason = "ambiguous_execution"
+            decision = _finish_decision(run.snapshot, reason, "blocked",
+                _assessment_for_stop(run.snapshot, reason), blockers=[
+                    "A prior action or provider attempt has an unresolved durable execution boundary; it was not relaunched."])
+            return _finalize(run, decision, "blocked", reason, now, fault_hook)
         for _ in range(max_transitions):
             decision = next_decision(run.snapshot)
             if decision.kind == "noop" or decision.kind == "await": return run.snapshot
             if decision.kind == "gate":
-                run.append(ResearchEvent.from_json({"schema_version": 3, "record_type": "research_event",
+                run.append(ResearchEvent.from_json({"schema_version": 4, "record_type": "research_event",
                     "sequence": run.snapshot.sequence + 1, "event_type": "decision_recorded",
                     "run_id": run.snapshot.request.run_id, "occurred_at": _utc(now),
                     "body": _decision_body(decision)}))
@@ -348,7 +477,7 @@ def run_research(run_dir: Path, *, provider_factory: ProviderFactory | None = No
                 preflight = getattr(adapter, "preflight", None)
                 if preflight is not None: preflight()
             if not is_resuming:
-                run.append(ResearchEvent.from_json({"schema_version": 3, "record_type": "research_event",
+                run.append(ResearchEvent.from_json({"schema_version": 4, "record_type": "research_event",
                     "sequence": run.snapshot.sequence + 1, "event_type": "decision_recorded",
                     "run_id": run.snapshot.request.run_id, "occurred_at": _utc(now),
                     "body": _decision_body(decision)}))

@@ -1,4 +1,4 @@
-"""Strict version-three request records for the bounded research workflow."""
+"""Strict version-three compatibility and version-four research request records."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from .validation import (
 )
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 _PROFILES = {
     "quick": (1, 0, 0, 1, 180),
     "deep": (8, 6, 1, 2, 900),
@@ -114,6 +114,8 @@ class ResearchRequest:
     capabilities: Mapping[str, bool]
     budgets: Mapping[str, int]
     sources: tuple[SourceInput, ...]
+    schema_version: int = SCHEMA_VERSION
+    execution_policy: str = "fixed"
 
     @classmethod
     def from_json(cls, payload: Any) -> "ResearchRequest":
@@ -121,12 +123,19 @@ class ResearchRequest:
         expected = {"schema_version", "record_type", "run_id", "question", "goal", "context",
                     "constraints", "audience", "objective", "mode", "stakes", "learning_mode",
                     "provider", "capabilities", "budgets", "sources"}
+        version = require_positive_integer(data.get("schema_version"), "schema_version")
+        if version == 4:
+            expected = expected | {"execution_policy"}
+        elif version != 3:
+            raise ValidationError("schema_version", "must equal 3 or 4")
         require_exact_fields(data, "research_request", expected)
-        if require_positive_integer(data["schema_version"], "schema_version") != SCHEMA_VERSION:
-            raise ValidationError("schema_version", "must equal 3")
         if data["record_type"] != "research_request":
             raise ValidationError("record_type", "must equal 'research_request'")
         mode = _enum(data["mode"], "mode", set(_PROFILES))
+        execution_policy = (_enum(data["execution_policy"], "execution_policy",
+            {"fixed", "sequential_review", "adaptive"}) if version == 4 else "fixed")
+        if mode == "quick" and execution_policy != "fixed":
+            raise ValidationError("execution_policy", "Quick supports only the fixed single-answer policy")
         stakes = _enum(data["stakes"], "stakes", {"ordinary", "significant", "high"})
         learning_mode = require_boolean(data["learning_mode"], "learning_mode")
         if stakes != "ordinary" or learning_mode:
@@ -164,15 +173,19 @@ class ResearchRequest:
         return cls(require_identifier(data["run_id"], "run_id"), _limited_text(data["question"], "question", 12000),
                    _limited_text(data["goal"], "goal", 4000, nullable=True), context, constraints,
                    _limited_text(data["audience"], "audience", 100), _enum(data["objective"], "objective", {"answer", "prove", "investigate"}),
-                   mode, stakes, learning_mode, provider, capabilities, MappingProxyType(budgets), sources)
+                   mode, stakes, learning_mode, provider, capabilities, MappingProxyType(budgets), sources,
+                   version, execution_policy)
 
     def to_json(self) -> dict[str, Any]:
-        return {"schema_version": 3, "record_type": "research_request", "run_id": self.run_id,
+        result = {"schema_version": self.schema_version, "record_type": "research_request", "run_id": self.run_id,
                 "question": self.question, "goal": self.goal, "context": self.context,
                 "constraints": list(self.constraints), "audience": self.audience, "objective": self.objective,
                 "mode": self.mode, "stakes": self.stakes, "learning_mode": self.learning_mode,
                 "provider": dict(self.provider), "capabilities": dict(self.capabilities),
                 "budgets": dict(self.budgets), "sources": [source.to_json() for source in self.sources]}
+        if self.schema_version >= 4:
+            result["execution_policy"] = self.execution_policy
+        return result
 
 
 def _parse_budgets(payload: Any, mode: str) -> dict[str, int]:
@@ -201,12 +214,15 @@ def _parse_budgets(payload: Any, mode: str) -> dict[str, int]:
 
 def build_request_payload(*, run_id: str, question: str, objective: str, mode: str, model: str,
                           goal: str | None = None, context: str | None = None,
-                          constraints: Sequence[str] = ()) -> dict[str, Any]:
+                          constraints: Sequence[str] = (),
+                          execution_policy: str = "fixed") -> dict[str, Any]:
     """Build explicit CLI defaults without changing any user supplied string."""
     if mode not in _PROFILES:
         raise ValidationError("mode", "must be one of deep, quick, research")
     calls, tools, repairs, branches, wall = _PROFILES[mode]
-    return {"schema_version": 3, "record_type": "research_request", "run_id": run_id,
+    if execution_policy not in {"fixed", "sequential_review", "adaptive"}:
+        raise ValidationError("execution_policy", "is invalid")
+    return {"schema_version": 4, "record_type": "research_request", "run_id": run_id,
             "question": question, "goal": goal, "context": context, "constraints": list(constraints),
             "audience": "unspecified", "objective": objective, "mode": mode, "stakes": "ordinary",
             "learning_mode": False, "provider": {"adapter": "codex", "model": model,
@@ -214,4 +230,5 @@ def build_request_payload(*, run_id: str, question: str, objective: str, mode: s
             "capabilities": {"fetch_sources": False, "math_checks": False},
             "budgets": {"max_model_calls": calls, "max_tool_calls": tools, "max_repairs": repairs,
             "max_branches": branches, "max_wall_seconds": wall, "per_call_seconds": 180,
-            "max_input_bytes": 131072}, "sources": []}
+            "max_input_bytes": 131072}, "sources": [],
+            "execution_policy": execution_policy}

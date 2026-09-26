@@ -6,10 +6,11 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
-from mathresearch.adapters.base import LaunchSpec, WorkerInput
+from mathresearch.adapters.base import LaunchSpec, WorkerInput, WorkerOutput
 from mathresearch.contracts.research_request import ResearchRequest
 from mathresearch.research.engine import answer_research_gate, initialize, run_research
 from mathresearch.research.store import load_research_status
@@ -21,7 +22,8 @@ def draft(answer: str, approach_id: str) -> dict[str, Any]:
     return {"answer": answer, "question_status": "answered", "claims": [{
         "id": "claim-one", "statement": "The candidate follows from its stated step.",
         "critical": True, "kind": "deduction", "citations": [], "step_ids": ["step-one"],
-        "tool_ids": [], "depends_on": []}],
+        "tool_ids": [], "depends_on": [], "basis": "derivation", "basis_reference": "The stated rule",
+        "scope_step_ids": [], "discharged_by_step_ids": []}],
         "proof_steps": [{"id": "step-one", "statement": "Apply the stated rule.",
             "justification": "The rule applies on the declared domain.", "depends_on": [], "citations": []}],
         "approaches": [{"id": approach_id, "description": f"Route {approach_id}",
@@ -35,6 +37,7 @@ def scripted_result(stage: str) -> dict[str, Any]:
         return {"task_type": "exploration", "deliverables": ["derive a bounded result"],
             "subquestions": ["what follows from the assumptions?"], "missing_inputs": [],
             "proposed_checks": [], "source_needs": []}
+    if role == "answer": return draft("Direct candidate proof.", "direct-route")
     if role == "branch": return draft(f"Independent candidate {branch}.", f"approach-{branch}")
     if role == "synthesize": return draft("Combined candidate argument.", "combined-route")
     if role == "revise":
@@ -43,7 +46,8 @@ def scripted_result(stage: str) -> dict[str, Any]:
         return revised
     if role == "audit":
         return {"checks": [{"claim_id": "claim-one", "verdict": "supported",
-            "reasoning": "The encoded step supports the scoped claim.", "checked_step_ids": ["step-one"]}],
+            "reasoning": "The encoded step supports the scoped claim.", "checked_step_ids": ["step-one"],
+            "basis_verdict": "applicable", "basis_reasoning": "The stated rule applies."}],
             "challenges": [{"claim_id": "claim-one", "attack": "Try a counterexample.",
                 "result": "No counterexample was found within this challenge.",
                 "outcome": "survives", "tool_ids": []}], "missing_evidence": [],
@@ -116,7 +120,8 @@ class ResearchEngineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); run_dir = self._run(root)
             stages: list[str] = []; factory, resolved, marker = self._factory(root, stages)
-            final = run_research(run_dir, provider_factory=factory)
+            final = run_research(run_dir, provider_factory=factory,
+                                 scratch_parent=root / "worker-scratch")
             self.assertEqual(final.status, "complete", final.reason)
             self.assertEqual(stages, ["frame:", "branch:a", "branch:b", "synthesize:", "audit:"])
             self.assertEqual(len(set(marker.read_text(encoding="utf-8").splitlines())), 5)
@@ -134,6 +139,140 @@ class ResearchEngineTests(unittest.TestCase):
             again = run_research(run_dir, provider_factory=lambda request: self.fail("terminal resume resolved provider"))
             self.assertEqual(again.sequence, reopened.sequence)
             self.assertEqual(stages, ["frame:", "branch:a", "branch:b", "synthesize:", "audit:"])
+
+    def test_adaptive_policy_uses_only_draft_and_audit_when_obligations_are_met(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp:
+            root = Path(temp)
+            def configure(payload: dict[str, Any]) -> None:
+                payload["schema_version"] = 4
+                payload["execution_policy"] = "adaptive"
+            run_dir = self._run(root, configure=configure)
+            stages: list[str] = []
+            factory, _, _ = self._factory(root, stages)
+            def fake_worker(adapter, task, **kwargs):
+                stages.append(task.stage)
+                payload = scripted_result(task.stage)
+                return WorkerOutput("succeeded", 0,
+                    json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                    b"model: gpt-test\nreasoning effort: high\n", payload, None)
+            with patch("mathresearch.research.engine.execute_worker", side_effect=fake_worker):
+                final = run_research(run_dir, provider_factory=factory,
+                                     scratch_parent=root / "worker-scratch")
+            self.assertEqual(final.status, "complete", final.reason)
+            self.assertEqual(stages, ["answer:", "audit:"])
+            self.assertEqual(final.model_calls_used, 2)
+            self.assertEqual(final.final_assessment["answer_status"], "supported_within_scope")
+
+    def test_real_polynomial_receipt_is_in_draft_and_audit_evidence_packets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            def configure(payload: dict[str, Any]) -> None:
+                payload["capabilities"]["math_checks"] = True
+            run_dir = self._run(root, configure=configure)
+            frame = scripted_result("frame:")
+            frame["proposed_checks"] = [{"id": "identity-check", "operation": "check_polynomial",
+                "arguments": {"lhs": [2, 3, 1], "rhs": [2, 3, 1], "lo": -10, "hi": 10}}]
+            def checked_draft(answer: str, approach: str) -> dict[str, Any]:
+                result = draft(answer, approach)
+                result["claims"][0].update({"statement": "The encoded polynomials are equal.",
+                    "tool_ids": ["a0002"]})
+                result["proof_steps"][0].update({"statement": "Compare the encoded coefficients.",
+                    "justification": "The deterministic receipt confirms equality."})
+                return result
+            audit = scripted_result("audit:")
+            audit["checks"][0].update({"reasoning": "The polynomial identity receipt agrees with the claim."})
+            audit["challenges"][0].update({"tool_ids": ["a0002"]})
+            outputs = {"frame:": [frame], "branch:a": [checked_draft("Candidate A.", "route-a")],
+                "branch:b": [checked_draft("Candidate B.", "route-b")],
+                "synthesize:": [checked_draft("Combined identity proof.", "combined")],
+                "audit:": [audit]}
+            stages: list[str] = []
+            marker = root / "child-invocations.txt"
+            factory = lambda request, recorded_config=None: ScriptedAdapter(
+                request, marker, stages, outputs)
+            with patch.dict(os.environ, {"PYTHONPATH": str(Path("src").resolve())}):
+                final = run_research(run_dir, provider_factory=factory,
+                                     scratch_parent=root / "worker-scratch")
+            self.assertEqual(final.status, "complete", final.reason)
+            self.assertTrue(any(action.get("kind") == "tool" for action in final.actions.values()))
+            draft_action = next(action for action in final.actions.values()
+                if action.get("role") == "synthesize")
+            audit_action = next(action for action in final.actions.values()
+                if action.get("role") == "audit")
+            for action_id in (draft_action["id"], audit_action["id"]):
+                packet = json.loads(final.intent_packets[action_id])
+                receipt = packet["tool_results"]["a0002"]
+                self.assertEqual(receipt["request"]["operation"], "check_polynomial")
+                self.assertEqual(receipt["status"], "succeeded")
+
+    def test_structural_repair_is_a_separate_budgeted_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            def configure(payload: dict[str, Any]) -> None:
+                payload["budgets"]["max_model_calls"] = 2
+                payload["budgets"]["max_repairs"] = 1
+            run_dir = self._run(root, configure=configure)
+            invalid = scripted_result("frame:")
+            invalid["unrecognized"] = "force repair"
+            stages: list[str] = []
+            marker = root / "child-invocations.txt"
+            outputs = {"frame:": [invalid, scripted_result("frame:")]}
+            def factory(request: ResearchRequest, *, recorded_config: Mapping[str, Any] | None):
+                return ScriptedAdapter(request, marker, stages, outputs)
+            final = run_research(run_dir, provider_factory=factory)
+            self.assertEqual(final.model_calls_used, 2)
+            self.assertEqual(len(final.attempts), 2)
+            attempts = list(final.attempts.values())
+            self.assertEqual(attempts[0]["attempt_kind"], "initial")
+            self.assertEqual(attempts[1]["attempt_kind"], "structural_repair")
+            self.assertEqual(attempts[1]["prompt_version"], "structural-repair-v3")
+            self.assertEqual(attempts[1]["parent_attempt_id"], attempts[0]["attempt_id"])
+            self.assertGreater(attempts[1]["input_bytes"], attempts[0]["input_bytes"])
+            review = attempts[1]["repair_review"]
+            self.assertEqual(review["rejected_payload"]["unrecognized"], "force repair")
+            self.assertEqual(review["corrected_payload"], scripted_result("frame:"))
+            self.assertEqual(review["diff"][0]["path"], "/unrecognized")
+            self.assertIn("diff", review["change_explanation"])
+            self.assertEqual(stages, ["frame:", "frame:"])
+            self.assertTrue((run_dir / "actions" / "a0001" / "attempts" /
+                             attempts[0]["attempt_id"] / "stdout.bin").is_file())
+
+    def test_structural_repair_does_not_exceed_one_attempt_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            def configure(payload: dict[str, Any]) -> None:
+                payload["budgets"]["max_model_calls"] = 1
+            run_dir = self._run(root, configure=configure)
+            invalid = scripted_result("frame:")
+            invalid["unrecognized"] = "force repair"
+            stages: list[str] = []
+            outputs = {"frame:": [invalid, scripted_result("frame:")]}
+            marker = root / "child-invocations.txt"
+            def factory(request: ResearchRequest, *, recorded_config: Mapping[str, Any] | None):
+                return ScriptedAdapter(request, marker, stages, outputs)
+            final = run_research(run_dir, provider_factory=factory)
+            self.assertEqual(final.model_calls_used, 1)
+            self.assertEqual(len(final.attempts), 1)
+            self.assertEqual(stages, ["frame:"])
+
+    def test_crash_after_provider_attempt_intent_is_ambiguous_without_relaunch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            run_dir = self._run(root)
+            stages: list[str] = []
+            factory, _, _ = self._factory(root, stages)
+            def crash(phase: str, snapshot: Any) -> None:
+                if phase == "after_provider_attempt_intent":
+                    raise RuntimeError("stop after provider intent")
+            with self.assertRaisesRegex(RuntimeError, "stop after provider intent"):
+                run_research(run_dir, provider_factory=factory, fault_hook=crash)
+            final = run_research(run_dir, provider_factory=lambda request: self.fail("ambiguous provider attempt relaunched"))
+            self.assertEqual((final.status, final.reason), ("blocked", "ambiguous_execution"))
+            self.assertEqual(final.model_calls_used, 1)
+            self.assertEqual(stages, [])
+            terminal_resume = run_research(run_dir,
+                provider_factory=lambda request: self.fail("terminal ambiguous attempt resolved provider"))
+            self.assertEqual(terminal_resume.sequence, final.sequence)
 
     def test_crash_after_finished_branch_resumes_without_second_child_call(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

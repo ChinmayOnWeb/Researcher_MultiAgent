@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "generator_seed": 20260924,
+  "answers": {
+    "dev-subset-sum-9": {"count": 7, "witness": [1, 8], "certificate": "Four pairs and three triples; no singleton or four-element subset can sum to 9."},
+    "dev-rational-domain-2": {"simplification": "x+2", "domain": "all real x except 2", "identity_check": "x^2-4=(x-2)(x+2); cancellation is valid only when x!=2."},
+    "dev-euler-boundary-40": {"truth": false, "counterexample": {"n": 40, "value": 1681, "factorization": "41*41"}, "finite_check": "direct integer evaluation for 0<=n<=40"},
+    "dev-schedule-amendment": {"current_time": "Thursday 10:00 local time", "superseded": "Thursday 09:30 local time", "basis": "Signed v2 amendment explicitly replaces v1."},
+    "dev-flawed-proof-sqrt2": {"truth": "the irrationality proof is valid", "certificate": "If a is odd then a^2 is odd, contradicting a^2=2b^2. Thus a=2k; substitution gives b^2=2k^2, so b is even. This contradicts lowest terms."},
+    "dev-shipment-records": {"shipped_units": 96, "usable_units": 93, "certificate": "12*8=96; 96-3=93."},
+    "dev-quick-odd-sum": {"identity": "sum of first n odd positive integers is n^2", "certificate": "Induction: at n=1 the sum is 1. If the sum through n is n^2, then adding 2n+1 gives n^2+2n+1=(n+1)^2."}
+  }
+}

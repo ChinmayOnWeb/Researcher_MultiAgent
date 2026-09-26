@@ -1,0 +1,1 @@
+{"action_id":"a0002","capabilities":{"fetch_sources":false,"math_checks":true},"request":{"arguments":{"n":2},"id":"chk-domain-2","operation":"check_integer"},"scope":"Coordinator-authorized check_integer operation with exact validated arguments.","version":"broker-request-v1"}

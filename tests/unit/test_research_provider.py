@@ -4,8 +4,8 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from mathresearch.research.provider import (check_provider_observation, create_research_provider,
-    parse_provider_observation, provider_configuration)
+from mathresearch.research.provider import (check_provider_observation, count_session_id_markers,
+    create_research_provider, parse_provider_observation, provider_configuration)
 from tests.unit.test_research_contracts import valid_request_payload
 from mathresearch.contracts.research_request import ResearchRequest
 
@@ -43,6 +43,10 @@ class ResearchProviderTests(unittest.TestCase):
         log = ("OpenAI Codex\nmodel: gpt-test\nreasoning effort: high\nuser\n"
                "model: attacker-echo\nreasoning effort: medium\n")
         self.assertEqual(parse_provider_observation(log), {"model": "gpt-test", "effort": "high"})
+
+    def test_session_marker_count_does_not_return_session_identifiers(self) -> None:
+        log = "session id: abc123\nother output\nsession id: def456\n"
+        self.assertEqual(count_session_id_markers(log), 2)
 
     def test_missing_or_contradictory_header_observations_are_unknown(self) -> None:
         self.assertEqual(parse_provider_observation("user\nreasoning effort: high"),
